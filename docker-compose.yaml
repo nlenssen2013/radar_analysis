@@ -1,0 +1,10 @@
+version: '3.11'
+services:
+  radar_widget:
+    container_name: radar_widget
+    image: radar_widget
+    build: .
+    ports:
+      - "5000:5000"
+    volumes:
+      - .:/app
