@@ -22,6 +22,7 @@ class Filter():
         
 
     def filter_dbz(self, filtered_amount):
+        # To do: Remove hard coding and replace with AWS Bucket call
         radar_data = Level3File("radar_3_data/KMLB_SDUS52_TZ0MCO_202405151912")
 
         datadict = radar_data.sym_block[0][0]
