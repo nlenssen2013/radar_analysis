@@ -13,6 +13,7 @@ from metpy.cbook import get_test_data
 from metpy.io import Level3File
 from metpy.plots import add_metpy_logo, add_timestamp, colortables, USCOUNTIES
 from metpy.units import units
+import os
 
 
 class Filter():
@@ -58,8 +59,9 @@ class Filter():
         ax.set_aspect('equal', 'datalim')
         add_timestamp(ax, radar_data.metadata['prod_time'], y=0.02, high_contrast=True)
         image_name = 'static/radar_filter.jpg'
+        os.makedirs('static', exist_ok=True)
         plt.savefig(image_name)
 
-        return 'radar_filter.jpg'
+        return 'static/radar_filter.jpg'
 
     

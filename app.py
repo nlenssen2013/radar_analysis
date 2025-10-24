@@ -8,11 +8,11 @@ app = Flask(__name__)
 def index():
     return 'App Works!'
 
-@app.route('/radar_filter/<path:path>')
-def subset_radar_file(path):
+@app.route('/radar_filter/<path:path>/<int:filtered_amount>')
+def subset_radar_file(path, filtered_amount):
 
     filter_radar = Filter(path)
-    my_radar_image = filter_radar.filter_dbz(23)
+    my_radar_image = filter_radar.filter_dbz(filtered_amount)
     #print (my_radar_image)
     return render_template("index.html")
 
