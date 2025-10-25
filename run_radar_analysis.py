@@ -15,13 +15,14 @@ from metpy.plots import add_metpy_logo, add_timestamp, colortables, USCOUNTIES
 from metpy.units import units
 import os
 
-
+# Filter class is imported by app.py
+# add other functions to apply to an API call
 class Filter():
     
     def __init__(self, file_path):
         self.radar_data = Level3File(file_path)
         
-
+    
     def filter_dbz(self, filtered_amount):
         # To do: Remove hard coding and replace with AWS Bucket call
         radar_data = Level3File("radar_3_data/KMLB_SDUS52_TZ0MCO_202405151912")
