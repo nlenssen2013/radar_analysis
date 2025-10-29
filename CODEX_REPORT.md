@@ -1,19 +1,30 @@
 # CODEX Report
 
-## Frameworks Detected
-- **Flask** (`app.py`) provides the HTTP API and static file hosting.
-- **MetPy**, **Cartopy**, and **Matplotlib** (`services/radar_processing.py`) render Level III radar data into images.
-- **Leaflet** (`static/radar.html`, `static/js/radar.js`) powers the interactive browser map overlay.
+## Framework & Entry Point
+- **Flask** application instantiated in `app.py` (`app = Flask(__name__, static_folder="static", static_url_path="/static")`).
 
-## Key Files
-- `services/data_sources/base.py`: Abstract data-source contract.
-- `services/data_sources/s3_source.py`: AWS S3 implementation for Level III products.
-- `services/data_sources/thread_source.py`: NOAA/NCEI thread server implementation.
-- `services/radar_processing.py`: Core radar-to-image conversion utilities.
-- `app.py`: Flask entry point exposing `/api/files` and `/api/file` for the front-end.
-- `static/radar.html` & `static/js/radar.js`: HTML/JS client for browsing and filtering radar products.
+## Registered Routes (`app.url_map`)
+- `/static/<path:filename>` → Flask static file handler
+- `/` → `index`
+- `/radar_filter/<path:path>/<int:filtered_amount>` → `subset_radar_file`
+- `/health` → `health`
+- `/radar_files` → `radar_files`
+- `/radar_filter_q` → `radar_filter_q`
+- `/api/files` → `api_files`
+- `/api/file` → `api_file`
 
-## Gaps & Notes
-- Thread server catalogue parsing assumes access to a `catalog.xml` listing; additional work may be needed for alternate deployments.
-- Geographic bounds are approximated from polar coordinate transforms and may need refinement for specific products.
-- Large data processing remains CPU-intensive; consider caching rendered images for repeated threshold adjustments.
+## Static File Origin
+- Static assets are served from the repository’s `static/` directory (copied to `/app/static` inside the container by the Dockerfile).
+
+## Response Headers (captured via Flask test client)
+- **GET `/static/radar.html`**
+  - `Content-Type: text/html; charset=utf-8`
+- **GET `/static/radar.js`**
+  - `Content-Type: application/javascript`
+- **GET `/radar_files`**
+  - `Content-Type: application/json`
+- **GET `/radar_filter_q?path=radar_3_data/KMLB_SDUS52_TZ0MCO_202405151906.nc&threshold=23`**
+  - `Content-Type: image/png`
+  - `Cache-Control: no-store`
+  - `X-Radar-Source-Path: radar_3_data/KMLB_SDUS52_TZ0MCO_202405151906.nc`
+  - `X-Radar-Bounds: …` *(present when geographic bounds are available for the product)*
