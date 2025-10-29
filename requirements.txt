@@ -8,3 +8,8 @@ setuptools
 flask
 cartopy
 metpy
+boto3
+requests
+python-dotenv
+Flask-Cors
+pytest
