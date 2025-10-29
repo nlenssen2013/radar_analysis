@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.env
+.env.*
+*.sqlite3
+static/radar_filter.png
+static/radar_filter.jpg
+.radarlib/

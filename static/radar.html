@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>Radar Data Viewer</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-o9N1j7kP6+1jKqNvZFV7h6jhA3H0CwZ4ZjL2roV4bBU=" crossorigin="" />
+    <style>
+        body {
+            font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            background: #f5f7fb;
+            color: #1a1a1a;
+        }
+
+        header {
+            background: #1d3557;
+            color: #fff;
+            padding: 1rem 2rem;
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        .app-container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        .content {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        .sidebar {
+            width: 340px;
+            background: #ffffff;
+            box-shadow: 2px 0 8px rgba(0, 0, 0, 0.05);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .controls {
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid #e6ecf5;
+        }
+
+        .controls label {
+            display: block;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 0.35rem;
+            color: #4a5568;
+        }
+
+        .controls select,
+        .controls input,
+        .controls button {
+            width: 100%;
+            padding: 0.5rem 0.75rem;
+            margin-bottom: 0.75rem;
+            border: 1px solid #cbd5e0;
+            border-radius: 6px;
+            font-size: 0.95rem;
+        }
+
+        .controls button {
+            background: #457b9d;
+            color: #fff;
+            cursor: pointer;
+            border: none;
+        }
+
+        .controls button:hover {
+            background: #2a5880;
+        }
+
+        .threshold-group {
+            display: grid;
+            grid-template-columns: 1fr 70px;
+            gap: 0.5rem;
+            align-items: center;
+        }
+
+        .list-header {
+            padding: 0.75rem 1.5rem;
+            font-weight: 600;
+            color: #1d3557;
+        }
+
+        .file-list {
+            flex: 1;
+            overflow-y: auto;
+            margin: 0;
+            padding: 0 1.5rem 1.5rem 1.5rem;
+            list-style: none;
+        }
+
+        .file-list li {
+            padding: 0.55rem 0.75rem;
+            border: 1px solid transparent;
+            border-radius: 6px;
+            cursor: pointer;
+            margin-bottom: 0.5rem;
+            transition: background 0.2s, border-color 0.2s;
+            word-break: break-word;
+        }
+
+        .file-list li:hover {
+            background: #f1f5f9;
+            border-color: #cbd5e0;
+        }
+
+        .file-list li.active {
+            background: #e0f2fe;
+            border-color: #1d4ed8;
+            color: #1d4ed8;
+        }
+
+        .viewer {
+            flex: 1;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .viewer-toolbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 1rem 1.5rem;
+            background: #ffffff;
+            border-bottom: 1px solid #e6ecf5;
+        }
+
+        .viewer-toolbar label {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.95rem;
+            color: #2d3748;
+        }
+
+        .viewer-toolbar button {
+            padding: 0.45rem 0.9rem;
+            border-radius: 6px;
+            border: none;
+            background: #1d3557;
+            color: #fff;
+            cursor: pointer;
+        }
+
+        .viewer-toolbar button:hover {
+            background: #14233b;
+        }
+
+        #map {
+            flex: 1;
+        }
+
+        #radarImage {
+            max-width: 100%;
+            max-height: calc(100vh - 150px);
+            margin: 1.5rem auto;
+            display: block;
+            border-radius: 10px;
+            box-shadow: 0 12px 25px rgba(15, 23, 42, 0.15);
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        .status {
+            padding: 0.5rem 1.5rem;
+            background: #fff7ed;
+            border-top: 1px solid #fcd9bd;
+            color: #9a3412;
+            font-size: 0.9rem;
+        }
+
+        @media (max-width: 960px) {
+            .content {
+                flex-direction: column;
+            }
+
+            .sidebar {
+                width: 100%;
+                max-height: 45vh;
+            }
+
+            #radarImage {
+                max-height: 50vh;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <header>Radar Data Viewer</header>
+        <div class="content">
+            <aside class="sidebar">
+                <div class="controls">
+                    <label for="sourceSelect">Data source</label>
+                    <select id="sourceSelect">
+                        <option value="s3">AWS S3</option>
+                        <option value="thread">NOAA/NCEI Thread</option>
+                    </select>
+
+                    <label for="prefixInput">Prefix filter</label>
+                    <input id="prefixInput" type="text" placeholder="e.g. TBW_N0B_2025" />
+
+                    <label for="limitInput">Result limit</label>
+                    <input id="limitInput" type="number" value="20" min="1" max="500" />
+
+                    <label>DBZ Threshold</label>
+                    <div class="threshold-group">
+                        <input id="thresholdSlider" type="range" min="-20" max="80" value="23" />
+                        <input id="thresholdInput" type="number" min="-20" max="80" value="23" />
+                    </div>
+
+                    <button id="listBtn" type="button">Fetch files</button>
+                </div>
+
+                <div class="list-header">Available files</div>
+                <ul id="fileList" class="file-list"></ul>
+            </aside>
+
+            <section class="viewer">
+                <div class="viewer-toolbar">
+                    <label><input type="checkbox" id="overlayToggle" checked /> Map overlay</label>
+                    <button id="quickTest" type="button">Quick test</button>
+                </div>
+                <div id="map" class="hidden"></div>
+                <img id="radarImage" class="hidden" alt="Radar product" />
+                <div id="status" class="status hidden"></div>
+            </section>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-o2Qo+Cn8xqGa9hb9TIMfNWO56VsoEq+ySt5mTRHw3tw=" crossorigin=""></script>
+    <script src="js/radar.js"></script>
+</body>
+</html>

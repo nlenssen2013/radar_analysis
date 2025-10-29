@@ -1,68 +1,52 @@
-"""
-Module has three main classes. One to filter out the radar image.
-One to produce a csv based on the radar image.
-"""
+"""Legacy filter wrapper maintained for backwards compatibility."""
 
-import cartopy.crs as ccrs
-import matplotlib.gridspec as gridspec
-import matplotlib.pyplot as plt
-import numpy as np
+from __future__ import annotations
 
-from metpy.calc import azimuth_range_to_lat_lon
-from metpy.cbook import get_test_data
-from metpy.io import Level3File
-from metpy.plots import add_metpy_logo, add_timestamp, colortables, USCOUNTIES
-from metpy.units import units
-import os
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
 
-# Filter class is imported by app.py
-# add other functions to apply to an API call
-class Filter():
-    
-    def __init__(self, file_path):
-        self.radar_data = Level3File(file_path)
-        
-    
-    def filter_dbz(self, filtered_amount):
-        # To do: Remove hard coding and replace with AWS Bucket call
-        radar_data = Level3File("radar_3_data/KMLB_SDUS52_TZ0MCO_202405151912")
+from services.radar_processing import ProcessedImage, process_level3_bytes
 
-        datadict = radar_data.sym_block[0][0]
-        #print (radar_data_dict)
-        data = radar_data.map_data(datadict['data'])
-        data_subset = np.where(data > filtered_amount, data, np.nan)
 
-        spec = gridspec.GridSpec(1, 2)
-        fig = plt.figure(figsize=(15, 8))
-        add_metpy_logo(fig, 190, 85, size='large')
-        ctables = ('NWSStormClearReflectivity', -20, 0.5)  # m/s
+@dataclass
+class FilterResult:
+    """Result returned from the legacy Filter helper."""
 
-        # Grab azimuths and calculate a range based on number of gates,
-        # both with their respective units
-        az = units.Quantity(np.array(datadict['start_az'] + [datadict['end_az'][-1]]), 'degrees')
-        rng = units.Quantity(np.linspace(0, radar_data.max_range, data_subset.shape[-1] + 1), 'kilometers')
+    image_path: Path
+    bounds: Optional[dict]
 
-        # Extract central latitude and longitude from the file
-        cent_lon = radar_data.lon
-        cent_lat = radar_data.lat
 
-        # Convert az,range to x,y
-        xlocs, ylocs = azimuth_range_to_lat_lon(az, rng, cent_lon, cent_lat)
-        ax_rect = gridspec.GridSpec(1,2)[0]
+class Filter:
+    """Compatibility wrapper around :func:`process_level3_bytes`."""
 
-        # Plot the data
-        crs = ccrs.LambertConformal()
-        ax = fig.add_subplot(ax_rect, projection=crs)
-        ax.add_feature(USCOUNTIES, linewidth=0.5)
-        norm, cmap = colortables.get_with_steps(*ctables)
-        ax.pcolormesh(xlocs, ylocs, data_subset, norm=norm, cmap=cmap, transform=ccrs.PlateCarree())
-        ax.set_extent([cent_lon - 0.7, cent_lon + 0.7, cent_lat - 0.7, cent_lat + 0.7])
-        ax.set_aspect('equal', 'datalim')
-        add_timestamp(ax, radar_data.metadata['prod_time'], y=0.02, high_contrast=True)
-        image_name = 'static/radar_filter.jpg'
-        os.makedirs('static', exist_ok=True)
-        plt.savefig(image_name)
+    def __init__(self, file_reference):
+        if isinstance(file_reference, (str, Path)):
+            file_path = Path(file_reference)
+            self._file_bytes = file_path.read_bytes()
+        elif isinstance(file_reference, (bytes, bytearray)):
+            self._file_bytes = bytes(file_reference)
+        else:
+            # file-like object
+            data = file_reference.read()
+            self._file_bytes = data if isinstance(data, bytes) else bytes(data)
 
-        return 'static/radar_filter.jpg'
+    def filter_dbz(self, filtered_amount: Optional[int] = None) -> Path:
+        """Render the radar product and store it under ``static/``."""
+
+        processed: ProcessedImage = process_level3_bytes(self._file_bytes, filtered_amount)
+        output_path = Path("static/radar_filter.png")
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(processed.content)
+        return output_path
+
+    def filter_dbz_with_metadata(
+        self, filtered_amount: Optional[int] = None
+    ) -> FilterResult:
+        processed: ProcessedImage = process_level3_bytes(self._file_bytes, filtered_amount)
+        output_path = Path("static/radar_filter.png")
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(processed.content)
+        return FilterResult(image_path=output_path, bounds=processed.bounds)
 
     
