@@ -14,7 +14,9 @@ S3_BUCKET=unidata-nexrad-level3
 THREAD_SERVER_URL=<https://example/thredds/catalog/path>
 ```
 
-`AWS_PROFILE` is optional; leave it blank to use the default AWS credential chain.
+`AWS_PROFILE` is optional; leave it blank to use the default AWS credential chain. The
+`AWS_REGION` and `S3_BUCKET` defaults match the public Level III bucket and are safe to
+commit for local development.
 
 ## Local Development
 1. Create a virtual environment and install dependencies:
@@ -34,19 +36,32 @@ Alternatively, you can run the existing Docker setup:
 docker compose up
 ```
 
-## Radar Viewer
-1. Ensure the Flask server is running.
-2. Open `static/radar.html` in a browser (e.g. `http://localhost:5000/static/radar.html`).
-3. Choose a data source (S3 or NOAA/NCEI Thread), optionally provide a prefix filter and limit, then click **Fetch files**.
-4. Click a key from the list to render the radar product.
-5. Adjust the DBZ threshold slider or number input to re-render the current product without reloading the page.
-6. Toggle **Map overlay** to switch between Leaflet map overlay (when geographic bounds are available) and the standalone image view.
-7. Use the **Quick test** button to automatically load the known good dataset:
-   - Source: S3
-   - Key: `TBW_N0B_2025_06_15_19_01_56`
-   - Threshold: `23`
+## Last-hour ingest workflow
 
-If the backend cannot compute bounds for a product, the viewer automatically falls back to the standalone image display.
+The project includes a helper to pull the latest 60 minutes of Level III base reflectivity
+products and seed the local cache:
+
+```bash
+export AWS_REGION=us-east-1
+export S3_BUCKET=unidata-nexrad-level3
+# optional filters
+export SITES=KMLB,KJAX,KMIA,KTBW
+export MINUTES=60
+python scripts/ingest_last_hour.py
+```
+
+The script populates `radar_3_data/latest/` via the shared cache layer and writes a
+timestamped copy to `radar_3_data/hourly/<YYYYMMDDHH>/`.
+
+## Radar Viewer
+1. Ensure the Flask server is running (`python app.py`) and visit `http://localhost:5000/`.
+2. Choose a **Data source** (`local`, `s3`, or `thread`). The UI defaults to the local cache
+   for reliability and will automatically fall back if a remote source returns a 5xx error.
+3. Use the **Location** and **Search radar** drop-downs to filter by city/state or call sign.
+4. Select a radar to view the four tilt cards (overview + zoom) generated from the cached
+   Level III files.
+5. If no products appear, run `scripts/ingest_last_hour.py` to refresh the cache or switch
+   to a different source.
 
 ## Testing
 Run the unit tests with:
