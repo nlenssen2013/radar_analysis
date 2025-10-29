@@ -46,10 +46,27 @@ def test_s3_get_image_for_key_uses_processor(monkeypatch):
         def get_object(self, **kwargs):
             return {"Body": DummyBody(b"level3-bytes")}
 
-    processed = SimpleNamespace(content=b"png-bytes", content_type="image/png", bounds={"min_lat": 0.0})
+    processed = SimpleNamespace(
+        content=b"png-bytes",
+        content_type="image/png",
+        bounds={"min_lat": 0.0},
+        metadata={"title": "Demo"},
+    )
     monkeypatch.setattr(
         "services.data_sources.s3_source.process_level3_bytes",
-        lambda data, threshold=None: processed,
+        lambda data, threshold=None, view="combined": processed,
+    )
+    monkeypatch.setattr(
+        "services.data_sources.s3_source.local_cache.get_cached_bytes",
+        lambda key: None,
+    )
+
+    def _store_bytes(key, payload):
+        return Path("/tmp") / key.replace("/", "_")
+
+    monkeypatch.setattr(
+        "services.data_sources.s3_source.local_cache.store_bytes",
+        _store_bytes,
     )
 
     source = S3DataSource(bucket="demo", client=Client())
@@ -101,10 +118,27 @@ def test_thread_list_keys_filters_prefix():
 
 def test_thread_get_image_for_key(monkeypatch):
     session = FakeSession()
-    processed = SimpleNamespace(content=b"png-bytes", content_type="image/png", bounds=None)
+    processed = SimpleNamespace(
+        content=b"png-bytes",
+        content_type="image/png",
+        bounds=None,
+        metadata={},
+    )
     monkeypatch.setattr(
         "services.data_sources.thread_source.process_level3_bytes",
-        lambda data, threshold=None: processed,
+        lambda data, threshold=None, view="combined": processed,
+    )
+    monkeypatch.setattr(
+        "services.data_sources.thread_source.local_cache.get_cached_bytes",
+        lambda key: None,
+    )
+
+    def _store_thread_bytes(key, payload):
+        return Path("/tmp") / key.replace("/", "_")
+
+    monkeypatch.setattr(
+        "services.data_sources.thread_source.local_cache.store_bytes",
+        _store_thread_bytes,
     )
 
     source = ThreadDataSource(base_url="https://example.test/thredds/catalog", session=session)
