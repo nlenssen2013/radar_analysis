@@ -71,14 +71,18 @@ class S3DataSource(BaseDataSource):
         return keys[:limit]
 
     def get_image_for_key(
-        self, key: str, threshold: Optional[int] = None
+        self, key: str, threshold: Optional[int] = None, view: str = "combined"
     ) -> Tuple[bytes, Dict[str, object]]:
-        response = self.client.get_object(Bucket=self.bucket, Key=key)
-        file_bytes = response["Body"].read()
-        processed = process_level3_bytes(file_bytes, threshold)
+        file_bytes = self.get_level3_bytes(key)
+        processed = process_level3_bytes(file_bytes, threshold, view=view)
         metadata: Dict[str, object] = {
             "content_type": processed.content_type,
             "bounds": processed.bounds,
             "key": key,
         }
+        metadata.update(processed.metadata)
         return processed.content, metadata
+
+    def get_level3_bytes(self, key: str) -> bytes:
+        response = self.client.get_object(Bucket=self.bucket, Key=key)
+        return response["Body"].read()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Dict, Optional, Tuple
 
 import pytest
 
@@ -43,3 +44,39 @@ def test_filter_returns_image(client, tmp_path, monkeypatch):
     content_type = response.headers.get("Content-Type", "")
     assert content_type.startswith("image/")
     assert len(response.data) > 1000
+
+
+class DummyDataSource:
+    def __init__(self):
+        self.keys = [
+            "KMLB_N0B_20240515_180000",
+            "KMLB_N1B_20240515_180500",
+            "KTLX_N0B_20240515_180200",
+            "KTLX_N0B_20240515_181200",
+        ]
+
+    def list_keys(self, prefix: Optional[str] = None, limit: int = 50):
+        return self.keys[:limit]
+
+    def get_image_for_key(
+        self, key: str, threshold: Optional[int] = None, view: str = "combined"
+    ) -> Tuple[bytes, Dict[str, object]]:
+        return b"image-bytes", {"content_type": "image/png", "bounds": None, "key": key}
+
+    def get_level3_bytes(self, key: str) -> bytes:
+        raise AssertionError("metadata access should be disabled in this test")
+
+
+def test_latest_base_reflectivity_endpoint(monkeypatch, client):
+    monkeypatch.setitem(radar_app._DATA_SOURCE_FACTORIES, "dummy", DummyDataSource)
+    response = client.get(
+        "/api/base_reflectivity/latest",
+        query_string={"source": "dummy", "include_metadata": "false"},
+    )
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["count"] == 2
+    radar_ids = {item["radar_id"] for item in payload["radars"]}
+    assert radar_ids == {"KMLB", "KTLX"}
+    for radar in payload["radars"]:
+        assert "products" in radar and radar["products"]

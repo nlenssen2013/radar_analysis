@@ -1,104 +1,324 @@
-(function(){
-  const qs = (id) => document.getElementById(id);
-  const listEl   = qs('list');
-  const imgEl    = qs('radar');
-  const dbzEl    = qs('dbz');
-  const prefixEl = qs('prefix');
-  const linkEl   = qs('openLink');
-  const msgEl    = qs('msg');
+(function () {
+  const dom = {
+    source: document.getElementById('sourceSelect'),
+    prefix: document.getElementById('prefixInput'),
+    search: document.getElementById('searchInput'),
+    sort: document.getElementById('sortSelect'),
+    refresh: document.getElementById('refreshBtn'),
+    list: document.getElementById('radarList'),
+    title: document.getElementById('selectedTitle'),
+    meta: document.getElementById('selectedMeta'),
+    updated: document.getElementById('selectedUpdated'),
+    images: document.getElementById('images'),
+    status: document.getElementById('status'),
+  };
 
-  function msg(s){ msgEl.textContent = s || ""; }
+  const state = {
+    source: dom.source.value,
+    radars: [],
+    filtered: [],
+    selectedId: null,
+    sortBy: dom.sort.value,
+  };
 
-  async function listFiles() {
+  function setStatus(message, isError = false) {
+    if (!message) {
+      dom.status.classList.add('hidden');
+      dom.status.textContent = '';
+      dom.status.classList.remove('error');
+      return;
+    }
+    dom.status.textContent = message;
+    dom.status.classList.remove('hidden');
+    dom.status.classList.toggle('error', isError);
+  }
+
+  function normaliseText(value) {
+    return (value || '').toString().toLowerCase();
+  }
+
+  function formatTilt(tilt) {
+    if (typeof tilt === 'number' && !Number.isNaN(tilt)) {
+      return `${tilt.toFixed(1)}° tilt`;
+    }
+    return 'Tilt';
+  }
+
+  function toUtcText(timestamp) {
+    if (!timestamp) {
+      return null;
+    }
+    const ts = timestamp.endsWith('Z') ? timestamp : `${timestamp}Z`;
+    const date = new Date(ts);
+    if (Number.isNaN(date.getTime())) {
+      return null;
+    }
+    return `${date.toUTCString()}`;
+  }
+
+  function clearImages() {
+    dom.images.innerHTML = '';
+  }
+
+  async function loadImage(img, key, view) {
+    if (!key) {
+      return;
+    }
+    const params = new URLSearchParams({
+      source: state.source,
+      key,
+      view,
+    });
     try {
-      msg("");
-      listEl.innerHTML = "Loading...";
-      const r = await fetch('/radar_files', {cache:'no-store'});
-      if (!r.ok) throw new Error(`HTTP ${r.status} ${r.statusText}`);
-      const data = await r.json();
-      const pref = (prefixEl.value || '').trim().toUpperCase();
-      const all = Array.isArray(data.files) ? data.files : [];
-      const filtered = all.filter(f => pref ? f.toUpperCase().includes(pref) : true);
-      const header = document.createElement('div');
-      header.className = 'small';
-      header.textContent = `Total: ${all.length} | Showing: ${filtered.length}`;
-      listEl.innerHTML = '';
-      listEl.appendChild(header);
-      filtered.forEach(k => {
-        const a = document.createElement('a');
-        a.href = '#';
-        a.textContent = k;
-        a.style.display = 'block';
-        a.onclick = (e) => { e.preventDefault(); showAuto(k); };
-        listEl.appendChild(a);
-      });
-      if (filtered.length === 0) {
-        const d = document.createElement('div');
-        d.textContent = 'No matching items.';
-        listEl.appendChild(d);
+      const response = await fetch(`/api/file?${params.toString()}`);
+      if (!response.ok) {
+        throw new Error(`Server responded with ${response.status}`);
       }
-    } catch (e) {
-      listEl.textContent = 'Failed to list files: ' + e;
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      img.src = url;
+      img.dataset.url = url;
+      const metadataHeader = response.headers.get('X-Radar-Metadata');
+      if (metadataHeader && view === 'zoom') {
+        try {
+          const metadata = JSON.parse(metadataHeader);
+          if (metadata.title) {
+            img.setAttribute('alt', metadata.title);
+          }
+        } catch (error) {
+          console.debug('Unable to parse radar metadata header', error);
+        }
+      }
+    } catch (error) {
+      console.error(error);
+      setStatus(`Failed to load radar image: ${error.message}`, true);
     }
   }
 
-  function currentPathFromImg() {
+  function renderImages(radar) {
+    clearImages();
+    if (!radar || !Array.isArray(radar.products)) {
+      return;
+    }
+    radar.products.forEach((product) => {
+      const card = document.createElement('div');
+      card.className = 'tilt-card';
+
+      const heading = document.createElement('h3');
+      const tiltLabel = formatTilt(product.tilt_degrees);
+      heading.textContent = `${product.code} — ${tiltLabel}`;
+      card.appendChild(heading);
+
+      const stamp = toUtcText(product.timestamp);
+      if (stamp) {
+        const stampEl = document.createElement('div');
+        stampEl.className = 'meta';
+        stampEl.textContent = `Scan time: ${stamp}`;
+        card.appendChild(stampEl);
+      }
+
+      const pair = document.createElement('div');
+      pair.className = 'view-pair';
+
+      ['overview', 'zoom'].forEach((view) => {
+        const container = document.createElement('div');
+        container.className = 'view';
+        const title = document.createElement('div');
+        title.className = 'view-title';
+        title.textContent = view === 'overview' ? 'State overview' : 'Local zoom';
+        const img = document.createElement('img');
+        img.alt = `${product.code} ${view}`;
+        img.loading = 'lazy';
+        container.appendChild(title);
+        container.appendChild(img);
+        pair.appendChild(container);
+        loadImage(img, product.key, view);
+      });
+
+      card.appendChild(pair);
+      dom.images.appendChild(card);
+    });
+  }
+
+  function updateSelection(radar) {
+    if (!radar) {
+      dom.title.textContent = 'Select a radar';
+      dom.meta.textContent = '';
+      dom.updated.style.display = 'none';
+      clearImages();
+      return;
+    }
+
+    const location = radar.location || 'Unknown location';
+    dom.title.textContent = `${radar.radar_id}${location ? ' — ' + location : ''}`;
+
+    const pieces = [];
+    if (radar.product_name) {
+      pieces.push(radar.product_name);
+    }
+    if (radar.elevation_degrees != null) {
+      pieces.push(`${radar.elevation_degrees.toFixed(1)}° tilt`);
+    }
+    dom.meta.textContent = pieces.join(' • ');
+
+    const updatedText = toUtcText(radar.product_time || radar.volume_time);
+    if (updatedText) {
+      dom.updated.textContent = `Updated ${updatedText}`;
+      dom.updated.style.display = 'inline-flex';
+    } else {
+      dom.updated.style.display = 'none';
+    }
+
+    renderImages(radar);
+  }
+
+  function setActiveListItem() {
+    const items = dom.list.querySelectorAll('li');
+    items.forEach((li) => {
+      li.classList.toggle('active', li.dataset.radarId === state.selectedId);
+    });
+  }
+
+  function handleSelect(radarId) {
+    state.selectedId = radarId;
+    const radar = state.radars.find((item) => item.radar_id === radarId);
+    setActiveListItem();
+    updateSelection(radar);
+  }
+
+  function renderList() {
+    const query = normaliseText(dom.search.value);
+    const items = state.radars.filter((radar) => {
+      if (!query) {
+        return true;
+      }
+      const haystack = [radar.radar_id, radar.raw_radar, radar.location, radar.city, radar.state]
+        .map(normaliseText)
+        .join(' ');
+      return haystack.includes(query);
+    });
+
+    dom.list.innerHTML = '';
+
+    if (!items.length) {
+      const placeholder = document.createElement('li');
+      placeholder.textContent = 'No radar sites match the current filters.';
+      placeholder.style.cursor = 'default';
+      placeholder.style.color = '#64748b';
+      dom.list.appendChild(placeholder);
+      return;
+    }
+
+    items.forEach((radar) => {
+      const li = document.createElement('li');
+      li.dataset.radarId = radar.radar_id;
+
+      const code = document.createElement('span');
+      code.className = 'radar-code';
+      code.textContent = radar.radar_id;
+      li.appendChild(code);
+
+      const location = document.createElement('span');
+      location.className = 'radar-location';
+      location.textContent = radar.location || 'Unknown location';
+      li.appendChild(location);
+
+      li.addEventListener('click', () => handleSelect(radar.radar_id));
+      dom.list.appendChild(li);
+    });
+
+    setActiveListItem();
+  }
+
+  function sortRadars() {
+    const sortBy = state.sortBy;
+    state.radars.sort((a, b) => {
+      if (sortBy === 'radar') {
+        return a.radar_id.localeCompare(b.radar_id);
+      }
+      const nameA = (a.location || '').toUpperCase();
+      const nameB = (b.location || '').toUpperCase();
+      if (nameA && nameB) {
+        return nameA.localeCompare(nameB);
+      }
+      if (nameA) return -1;
+      if (nameB) return 1;
+      return a.radar_id.localeCompare(b.radar_id);
+    });
+  }
+
+  async function loadRadars() {
+    setStatus('Fetching latest radar scans…');
+    clearImages();
+    dom.title.textContent = 'Select a radar';
+    dom.meta.textContent = '';
+    dom.updated.style.display = 'none';
+
+    const params = new URLSearchParams({
+      source: state.source,
+      include_metadata: 'true',
+    });
+    const prefix = dom.prefix.value.trim();
+    if (prefix) {
+      params.set('prefix', prefix);
+    }
+
     try {
-      const u = new URL(imgEl.dataset.src || '', window.location.origin);
-      const p = u.searchParams.get('path');
-      return p ? decodeURIComponent(p) : null;
-    } catch { return null; }
-  }
-
-  async function fetchAsImage(url) {
-    const r = await fetch(url, {cache:'no-store'});
-    if (!r.ok) {
-      const txt = await r.text();
-      throw new Error(`HTTP ${r.status} ${r.statusText}\n` + txt.slice(0,400));
+      const response = await fetch(`/api/base_reflectivity/latest?${params.toString()}`);
+      if (!response.ok) {
+        throw new Error(`Server responded with ${response.status}`);
+      }
+      const payload = await response.json();
+      const radars = Array.isArray(payload.radars) ? payload.radars : [];
+      state.radars = radars;
+      sortRadars();
+      renderList();
+      setStatus(`Loaded ${radars.length} radar site${radars.length === 1 ? '' : 's'}.`);
+      if (radars.length) {
+        const defaultId = state.selectedId && radars.some((item) => item.radar_id === state.selectedId)
+          ? state.selectedId
+          : radars[0].radar_id;
+        handleSelect(defaultId);
+      }
+    } catch (error) {
+      console.error(error);
+      setStatus(`Unable to fetch radar list: ${error.message}`, true);
+      state.radars = [];
+      dom.list.innerHTML = '';
     }
-    const blob = await r.blob();                 // works even if server says application/json
-    const objUrl = URL.createObjectURL(blob);
-    imgEl.src = objUrl;
-    imgEl.dataset.src = url;                     // remember source URL for re-render on DBZ change
-    linkEl.href = url;
-    linkEl.style.display = 'inline-block';
   }
 
-  async function showResolved(path, dbz) {
-    const url = '/radar_filter_q?path=' + encodeURIComponent(path) + '&threshold=' + dbz;
-    await fetchAsImage(url);
-    msg("");
+  function wireEvents() {
+    dom.refresh.addEventListener('click', () => {
+      state.selectedId = null;
+      loadRadars();
+    });
+
+    dom.source.addEventListener('change', () => {
+      state.source = dom.source.value;
+      state.selectedId = null;
+      loadRadars();
+    });
+
+    dom.sort.addEventListener('change', () => {
+      state.sortBy = dom.sort.value;
+      sortRadars();
+      renderList();
+    });
+
+    dom.search.addEventListener('input', () => {
+      renderList();
+    });
   }
 
-  async function showAuto(basePath) {
-    msg("");
-    imgEl.removeAttribute('src');
-    linkEl.style.display = 'none';
-    const dbz = parseInt(dbzEl.value || '23', 10);
-    const candidates = [basePath];
-    if (!/\.nc$/i.test(basePath)) {
-      candidates.push(basePath + '.nc');
-      if (!/\.mdv\.nc$/i.test(basePath)) candidates.push(basePath + '.mdv.nc');
-    }
-    let lastErr = null;
-    for (const c of candidates) {
-      try { await showResolved(c, dbz); return; } catch(e){ lastErr = e; }
-    }
-    msg('Could not render any candidate:\n' + candidates.join('\n') + '\n\nLast error: ' + lastErr);
+  function init() {
+    wireEvents();
+    loadRadars();
   }
-
-  function wire() {
-    qs('refresh').onclick = listFiles;
-    qs('quick').onclick   = () => showAuto('radar_3_data/KMLB_SDUS52_TZ0MCO_202405151906.nc');
-    dbzEl.onchange        = () => { const cur = currentPathFromImg(); if (cur) showAuto(cur); };
-    listFiles();
-  }
-
-  window.addEventListener('error', (e) => { msg('JS error: ' + e.message); });
 
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', wire);
+    document.addEventListener('DOMContentLoaded', init);
   } else {
-    wire();
+    init();
   }
 })();
