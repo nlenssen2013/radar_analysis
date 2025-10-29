@@ -95,5 +95,10 @@
   }
 
   window.addEventListener('error', (e) => { msg('JS error: ' + e.message); });
-  document.addEventListener('DOMContentLoaded', wire);
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', wire);
+  } else {
+    wire();
+  }
 })();
