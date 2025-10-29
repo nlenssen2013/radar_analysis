@@ -1,8 +1,8 @@
 (function () {
   const dom = {
     source: document.getElementById('sourceSelect'),
-    prefix: document.getElementById('prefixInput'),
-    search: document.getElementById('searchInput'),
+    prefix: document.getElementById('prefixSelect'),
+    search: document.getElementById('searchSelect'),
     sort: document.getElementById('sortSelect'),
     refresh: document.getElementById('refreshBtn'),
     list: document.getElementById('radarList'),
@@ -16,9 +16,10 @@
   const state = {
     source: dom.source.value,
     radars: [],
-    filtered: [],
     selectedId: null,
     sortBy: dom.sort.value,
+    prefixLocation: '',
+    searchSelection: '',
   };
 
   function setStatus(message, isError = false) {
@@ -31,10 +32,6 @@
     dom.status.textContent = message;
     dom.status.classList.remove('hidden');
     dom.status.classList.toggle('error', isError);
-  }
-
-  function normaliseText(value) {
-    return (value || '').toString().toLowerCase();
   }
 
   function formatTilt(tilt) {
@@ -58,6 +55,66 @@
 
   function clearImages() {
     dom.images.innerHTML = '';
+  }
+
+  function populateSelect(select, options, preferredValue) {
+    const currentValue = select.value;
+    const desiredValue =
+      preferredValue !== undefined && preferredValue !== null
+        ? preferredValue
+        : currentValue;
+
+    select.innerHTML = '';
+    options.forEach((option) => {
+      const opt = document.createElement('option');
+      opt.value = option.value;
+      opt.textContent = option.label;
+      if (option.value === desiredValue) {
+        opt.selected = true;
+      }
+      select.appendChild(opt);
+    });
+
+    if (!options.some((opt) => opt.value === desiredValue)) {
+      select.value = options.length ? options[0].value : '';
+    } else {
+      select.value = desiredValue;
+    }
+  }
+
+  function buildLocationLabel(radar) {
+    const location = radar.location || 'Unknown location';
+    return `${location} — ${radar.radar_id}`;
+  }
+
+  function updateSelectors() {
+    const uniqueLocations = new Set();
+    state.radars.forEach((radar) => {
+      uniqueLocations.add(radar.location || 'Unknown location');
+    });
+
+    const locationOptions = Array.from(uniqueLocations).sort((a, b) =>
+      a.localeCompare(b)
+    );
+
+    const prefixOptions = [{ value: '', label: 'All locations' }];
+    locationOptions.forEach((location) => {
+      prefixOptions.push({ value: location, label: location });
+    });
+    populateSelect(dom.prefix, prefixOptions, state.prefixLocation);
+    state.prefixLocation = dom.prefix.value;
+
+    const searchOptions = [{ value: '', label: 'Select a radar…' }];
+    const sortedRadars = state.radars.slice().sort((a, b) => {
+      const labelA = buildLocationLabel(a);
+      const labelB = buildLocationLabel(b);
+      return labelA.localeCompare(labelB);
+    });
+    sortedRadars.forEach((radar) => {
+      searchOptions.push({ value: radar.radar_id, label: buildLocationLabel(radar) });
+    });
+    populateSelect(dom.search, searchOptions, state.searchSelection);
+    state.searchSelection = dom.search.value;
   }
 
   async function loadImage(img, key, view) {
@@ -186,17 +243,20 @@
     updateSelection(radar);
   }
 
-  function renderList() {
-    const query = normaliseText(dom.search.value);
-    const items = state.radars.filter((radar) => {
-      if (!query) {
-        return true;
+  function filteredRadars() {
+    return state.radars.filter((radar) => {
+      if (state.prefixLocation) {
+        const location = radar.location || 'Unknown location';
+        if (location !== state.prefixLocation) {
+          return false;
+        }
       }
-      const haystack = [radar.radar_id, radar.raw_radar, radar.location, radar.city, radar.state]
-        .map(normaliseText)
-        .join(' ');
-      return haystack.includes(query);
+      return true;
     });
+  }
+
+  function renderList() {
+    const items = filteredRadars();
 
     dom.list.innerHTML = '';
 
@@ -206,6 +266,7 @@
       placeholder.style.cursor = 'default';
       placeholder.style.color = '#64748b';
       dom.list.appendChild(placeholder);
+      updateSelection(null);
       return;
     }
 
@@ -227,7 +288,13 @@
       dom.list.appendChild(li);
     });
 
+    if (!state.selectedId || !items.some((item) => item.radar_id === state.selectedId)) {
+      state.selectedId = items[0].radar_id;
+    }
+
     setActiveListItem();
+    const selectedRadar = state.radars.find((item) => item.radar_id === state.selectedId);
+    updateSelection(selectedRadar || null);
   }
 
   function sortRadars() {
@@ -258,10 +325,6 @@
       source: state.source,
       include_metadata: 'true',
     });
-    const prefix = dom.prefix.value.trim();
-    if (prefix) {
-      params.set('prefix', prefix);
-    }
 
     try {
       const response = await fetch(`/api/base_reflectivity/latest?${params.toString()}`);
@@ -272,14 +335,9 @@
       const radars = Array.isArray(payload.radars) ? payload.radars : [];
       state.radars = radars;
       sortRadars();
+      updateSelectors();
       renderList();
       setStatus(`Loaded ${radars.length} radar site${radars.length === 1 ? '' : 's'}.`);
-      if (radars.length) {
-        const defaultId = state.selectedId && radars.some((item) => item.radar_id === state.selectedId)
-          ? state.selectedId
-          : radars[0].radar_id;
-        handleSelect(defaultId);
-      }
     } catch (error) {
       console.error(error);
       setStatus(`Unable to fetch radar list: ${error.message}`, true);
@@ -297,6 +355,8 @@
     dom.source.addEventListener('change', () => {
       state.source = dom.source.value;
       state.selectedId = null;
+      state.prefixLocation = '';
+      state.searchSelection = '';
       loadRadars();
     });
 
@@ -306,8 +366,16 @@
       renderList();
     });
 
-    dom.search.addEventListener('input', () => {
+    dom.prefix.addEventListener('change', () => {
+      state.prefixLocation = dom.prefix.value;
       renderList();
+    });
+
+    dom.search.addEventListener('change', () => {
+      state.searchSelection = dom.search.value;
+      if (state.searchSelection) {
+        handleSelect(state.searchSelection);
+      }
     });
   }
 

@@ -27,6 +27,10 @@ class ThreadDataSource(BaseDataSource):
             raise ValueError("Thread server base URL is required")
 
         self.session = session or requests.Session()
+        self.session.headers.setdefault(
+            "User-Agent",
+            "radar-analysis/1.0 (+https://github.com/radar-analysis)",
+        )
         self.base_url = base_url.rstrip("/")
         self.catalog_url = self._build_catalog_url(self.base_url)
         self.file_base_url = self._build_file_base_url(self.base_url)
