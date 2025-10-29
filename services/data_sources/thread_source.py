@@ -9,6 +9,8 @@ from xml.etree import ElementTree
 
 import requests
 
+from .. import local_cache
+
 from .base import BaseDataSource
 from ..radar_processing import process_level3_bytes
 
@@ -86,7 +88,13 @@ class ThreadDataSource(BaseDataSource):
         return processed.content, metadata
 
     def get_level3_bytes(self, key: str) -> bytes:
+        cached = local_cache.get_cached_bytes(key)
+        if cached is not None:
+            return cached
+
         download_url = urljoin(f"{self.file_base_url}/", key.lstrip("/"))
         response = self.session.get(download_url, timeout=30)
         response.raise_for_status()
-        return response.content
+        payload = response.content
+        local_cache.store_bytes(key, payload)
+        return payload

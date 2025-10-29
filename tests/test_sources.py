@@ -56,6 +56,18 @@ def test_s3_get_image_for_key_uses_processor(monkeypatch):
         "services.data_sources.s3_source.process_level3_bytes",
         lambda data, threshold=None, view="combined": processed,
     )
+    monkeypatch.setattr(
+        "services.data_sources.s3_source.local_cache.get_cached_bytes",
+        lambda key: None,
+    )
+
+    def _store_bytes(key, payload):
+        return Path("/tmp") / key.replace("/", "_")
+
+    monkeypatch.setattr(
+        "services.data_sources.s3_source.local_cache.store_bytes",
+        _store_bytes,
+    )
 
     source = S3DataSource(bucket="demo", client=Client())
     content, metadata = source.get_image_for_key("demo-key", threshold=10)
@@ -115,6 +127,18 @@ def test_thread_get_image_for_key(monkeypatch):
     monkeypatch.setattr(
         "services.data_sources.thread_source.process_level3_bytes",
         lambda data, threshold=None, view="combined": processed,
+    )
+    monkeypatch.setattr(
+        "services.data_sources.thread_source.local_cache.get_cached_bytes",
+        lambda key: None,
+    )
+
+    def _store_thread_bytes(key, payload):
+        return Path("/tmp") / key.replace("/", "_")
+
+    monkeypatch.setattr(
+        "services.data_sources.thread_source.local_cache.store_bytes",
+        _store_thread_bytes,
     )
 
     source = ThreadDataSource(base_url="https://example.test/thredds/catalog", session=session)

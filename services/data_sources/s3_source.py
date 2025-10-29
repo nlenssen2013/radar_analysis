@@ -8,6 +8,8 @@ from typing import Dict, List, Optional, Tuple
 
 import boto3
 
+from .. import local_cache
+
 try:  # pragma: no cover - optional dependency at runtime
     from metpy.remote import NEXRADLevel3Archive
 except ModuleNotFoundError:  # pragma: no cover - optional dependency
@@ -28,7 +30,7 @@ class S3DataSource(BaseDataSource):
         client=None,
     ) -> None:
         if bucket is None:
-            bucket = os.getenv("S3_BUCKET")
+            bucket = os.getenv("S3_BUCKET", "noaa-nexrad-level3")
         if not bucket:
             raise ValueError("S3 bucket name is required")
 
@@ -101,6 +103,10 @@ class S3DataSource(BaseDataSource):
         return processed.content, metadata
 
     def get_level3_bytes(self, key: str) -> bytes:
+        cached = local_cache.get_cached_bytes(key)
+        if cached is not None:
+            return cached
+
         # Prefer MetPy's archive helper when available so we benefit from its
         # built-in caching and retry behaviour when accessing the public S3
         # bucket.  Fall back to boto3 if the helper is unavailable or fails.
@@ -113,7 +119,9 @@ class S3DataSource(BaseDataSource):
                     )
                     handle = product.access()
                     try:
-                        return handle.read()
+                        payload = handle.read()
+                        local_cache.store_bytes(key, payload)
+                        return payload
                     finally:
                         close = getattr(handle, "close", None)
                         if callable(close):
@@ -127,4 +135,6 @@ class S3DataSource(BaseDataSource):
                     )
 
         response = self.client.get_object(Bucket=self.bucket, Key=key)
-        return response["Body"].read()
+        payload = response["Body"].read()
+        local_cache.store_bytes(key, payload)
+        return payload

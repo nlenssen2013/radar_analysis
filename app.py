@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from io import BytesIO
 from mimetypes import add_type
 from pathlib import Path
@@ -13,6 +14,7 @@ from flask_cors import CORS
 from run_radar_analysis import Filter
 from services.data_sources import S3DataSource, ThreadDataSource
 from services.data_sources.base import BaseDataSource
+from services import local_cache
 from services.radar_catalog import (
     BASE_REFLECTIVITY_TILTS,
     latest_by_radar,
@@ -234,7 +236,15 @@ def api_latest_base_reflectivity():
             continue
 
         product_entries = []
+        downloaded: Dict[str, bytes] = {}
         for parsed in ordered_products:
+            try:
+                file_bytes = data_source.get_level3_bytes(parsed.key)
+                downloaded[parsed.key] = file_bytes
+            except Exception as exc:  # pragma: no cover - defensive guard
+                logging.getLogger(__name__).warning(
+                    "Unable to download %s from %s: %s", parsed.key, source, exc
+                )
             product_entries.append(
                 {
                     "code": parsed.product_code,
@@ -253,13 +263,22 @@ def api_latest_base_reflectivity():
         if include_metadata_flag:
             sample_key = ordered_products[0].key
             try:
-                file_bytes = data_source.get_level3_bytes(sample_key)
+                file_bytes = downloaded.get(sample_key)
+                if file_bytes is None:
+                    file_bytes = data_source.get_level3_bytes(sample_key)
                 metadata = read_level3_metadata(file_bytes)
             except Exception:  # pragma: no cover - defensive guard
                 metadata = {}
             radar_entry.update(metadata)
 
         radars.append(radar_entry)
+
+    # Prune any cached products older than an hour so the repository only keeps
+    # the freshest scans available to the viewer.
+    try:
+        local_cache.prune(max_age_minutes=60)
+    except Exception as exc:  # pragma: no cover - defensive guard
+        logging.getLogger(__name__).warning("Cache pruning failed: %s", exc)
 
     if include_metadata_flag:
         radars.sort(key=lambda item: (item.get("location") or item["radar_id"]).upper())
