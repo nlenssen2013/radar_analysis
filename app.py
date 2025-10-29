@@ -1,16 +1,22 @@
 from __future__ import annotations
 
 import json
+from io import BytesIO
+from mimetypes import add_type
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
 
 from dotenv import load_dotenv
-from flask import Flask, jsonify, make_response, render_template, request, url_for
+from flask import Flask, jsonify, make_response, render_template, request, send_file
 from flask_cors import CORS
 
 from run_radar_analysis import Filter
 from services.data_sources import S3DataSource, ThreadDataSource
 from services.data_sources.base import BaseDataSource
+from services.radar_processing import process_level3_bytes
+
+
+add_type("application/javascript", ".js")
 
 load_dotenv()
 
@@ -69,20 +75,51 @@ def radar_files():
 
 # Example:
 #   /radar_filter_q?path=radar_3_data/KMLB_SDUS52_TZ0MCO_202405151912&threshold=23
+def _load_radar_image(path: Path, threshold: Optional[int]):
+    """Render ``path`` at ``threshold`` and return processed content + metadata."""
+
+    if not path.exists():
+        raise FileNotFoundError(path)
+
+    try:
+        processed = process_level3_bytes(path.read_bytes(), threshold)
+    except Exception as exc:  # pragma: no cover - defensive guard
+        raise RuntimeError(str(exc)) from exc
+
+    return processed
+
+
 @app.get("/radar_filter_q")
 def radar_filter_q():
-    """Helper that returns the correct encoded route for the existing filter."""
-    path = request.args.get("path")
-    threshold = request.args.get("threshold", type=int)
-    if not path or threshold is None:
-        return jsonify(error="Provide ?path=<relative file path>&threshold=<int>"), 400
+    """Render a radar image directly as PNG bytes."""
 
-    # Build the exact route to your existing endpoint. url_for handles encoding.
-    route = url_for("subset_radar_file", path=path, filtered_amount=threshold)
-    return jsonify(
-        tip="Open this route to run the filter",
-        route=route
-    )
+    path_value = request.args.get("path")
+    threshold = request.args.get("threshold", type=int)
+
+    if not path_value or threshold is None:
+        return (
+            jsonify(error="Provide ?path=<relative file path>&threshold=<int>"),
+            400,
+        )
+
+    candidate_path = Path(path_value)
+
+    try:
+        processed = _load_radar_image(candidate_path, threshold)
+    except FileNotFoundError:
+        return jsonify(error=f"File not found: {path_value}"), 404
+    except RuntimeError as exc:
+        return jsonify(error=str(exc)), 500
+
+    buffer = BytesIO(processed.content)
+    buffer.seek(0)
+
+    response = send_file(buffer, mimetype=processed.content_type)
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["X-Radar-Source-Path"] = str(candidate_path)
+    if processed.bounds:
+        response.headers["X-Radar-Bounds"] = json.dumps(processed.bounds)
+    return response
 # --- end Brandan additions ---
 
 
