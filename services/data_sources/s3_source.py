@@ -7,6 +7,8 @@ import logging
 from typing import Dict, List, Optional, Tuple
 
 import boto3
+from botocore import UNSIGNED
+from botocore.config import Config
 
 from .. import local_cache
 
@@ -43,9 +45,21 @@ class S3DataSource(BaseDataSource):
             if profile:
                 session_kwargs["profile_name"] = profile
             session = boto3.session.Session(**session_kwargs)
-            self._client = session.client(
-                "s3", region_name=region or os.getenv("AWS_REGION")
-            )
+
+            client_kwargs = {}
+            resolved_region = region or os.getenv("AWS_REGION")
+            if resolved_region:
+                client_kwargs["region_name"] = resolved_region
+
+            try:
+                credentials = session.get_credentials()
+            except Exception:  # pragma: no cover - defensive guard
+                credentials = None
+
+            if credentials is None:
+                client_kwargs["config"] = Config(signature_version=UNSIGNED)
+
+            self._client = session.client("s3", **client_kwargs)
 
         archive = None
         if NEXRADLevel3Archive is not None:
