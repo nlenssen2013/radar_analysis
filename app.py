@@ -13,7 +13,12 @@ from flask_cors import CORS
 from run_radar_analysis import Filter
 from services.data_sources import S3DataSource, ThreadDataSource
 from services.data_sources.base import BaseDataSource
-from services.radar_processing import process_level3_bytes
+from services.radar_catalog import (
+    BASE_REFLECTIVITY_TILTS,
+    latest_by_radar,
+    sorted_products,
+)
+from services.radar_processing import process_level3_bytes, read_level3_metadata
 
 
 add_type("application/javascript", ".js")
@@ -75,14 +80,14 @@ def radar_files():
 
 # Example:
 #   /radar_filter_q?path=radar_3_data/KMLB_SDUS52_TZ0MCO_202405151912&threshold=23
-def _load_radar_image(path: Path, threshold: Optional[int]):
+def _load_radar_image(path: Path, threshold: Optional[int], view: str):
     """Render ``path`` at ``threshold`` and return processed content + metadata."""
 
     if not path.exists():
         raise FileNotFoundError(path)
 
     try:
-        processed = process_level3_bytes(path.read_bytes(), threshold)
+        processed = process_level3_bytes(path.read_bytes(), threshold, view=view)
     except Exception as exc:  # pragma: no cover - defensive guard
         raise RuntimeError(str(exc)) from exc
 
@@ -95,6 +100,7 @@ def radar_filter_q():
 
     path_value = request.args.get("path")
     threshold = request.args.get("threshold", type=int)
+    view = request.args.get("view", default="combined", type=str)
 
     if not path_value or threshold is None:
         return (
@@ -105,7 +111,7 @@ def radar_filter_q():
     candidate_path = Path(path_value)
 
     try:
-        processed = _load_radar_image(candidate_path, threshold)
+        processed = _load_radar_image(candidate_path, threshold, view)
     except FileNotFoundError:
         return jsonify(error=f"File not found: {path_value}"), 404
     except RuntimeError as exc:
@@ -119,6 +125,8 @@ def radar_filter_q():
     response.headers["X-Radar-Source-Path"] = str(candidate_path)
     if processed.bounds:
         response.headers["X-Radar-Bounds"] = json.dumps(processed.bounds)
+    if processed.metadata:
+        response.headers["X-Radar-Metadata"] = json.dumps(processed.metadata)
     return response
 # --- end Brandan additions ---
 
@@ -152,13 +160,16 @@ def api_file():
     source = request.args.get("source", type=str)
     key = request.args.get("key", type=str)
     threshold = request.args.get("threshold", type=int)
+    view = request.args.get("view", default="combined", type=str)
 
     if not source or not key:
         return jsonify(error="Both 'source' and 'key' parameters are required"), 400
 
     try:
         data_source = get_data_source(source)
-        content, metadata = data_source.get_image_for_key(key, threshold=threshold)
+        content, metadata = data_source.get_image_for_key(
+            key, threshold=threshold, view=view
+        )
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
     except Exception as exc:  # pragma: no cover - defensive guard
@@ -172,8 +183,100 @@ def api_file():
     if bounds:
         response.headers["X-Radar-Bounds"] = json.dumps(bounds)
     response.headers["X-Radar-Key"] = metadata.get("key", key)
+    extras = {k: v for k, v in metadata.items() if k not in {"bounds", "key", "content_type"}}
+    if extras:
+        response.headers["X-Radar-Metadata"] = json.dumps(extras)
 
     return response
+
+
+def _normalise_radar_filter(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    value = value.strip().upper()
+    if not value:
+        return None
+    if len(value) == 3 and not value.startswith("K"):
+        value = f"K{value}"
+    return value
+
+
+@app.get("/api/base_reflectivity/latest")
+def api_latest_base_reflectivity():
+    source = request.args.get("source", type=str)
+    if not source:
+        return jsonify(error="Missing required 'source' parameter"), 400
+
+    prefix = request.args.get("prefix", type=str)
+    radar_filter = _normalise_radar_filter(request.args.get("radar"))
+    include_metadata = request.args.get("include_metadata", default="true", type=str)
+    include_metadata_flag = include_metadata.lower() not in {"false", "0", "no"}
+    limit = request.args.get("limit", default=50, type=int)
+    search_limit = request.args.get("search_limit", default=max(limit * 25, 400), type=int)
+
+    try:
+        data_source = get_data_source(source)
+        keys = data_source.list_keys(prefix=prefix, limit=search_limit)
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+    except Exception as exc:  # pragma: no cover - defensive guard
+        return jsonify(error=str(exc)), 502
+
+    latest = latest_by_radar(keys)
+    radars = []
+
+    for radar_id, products in latest.items():
+        if radar_filter and radar_id != radar_filter:
+            continue
+
+        ordered_products = sorted_products(products)
+        if not ordered_products:
+            continue
+
+        product_entries = []
+        for parsed in ordered_products:
+            product_entries.append(
+                {
+                    "code": parsed.product_code,
+                    "key": parsed.key,
+                    "timestamp": parsed.timestamp.replace(tzinfo=None).isoformat(),
+                    "tilt_degrees": BASE_REFLECTIVITY_TILTS.get(parsed.product_code),
+                }
+            )
+
+        radar_entry: Dict[str, object] = {
+            "radar_id": radar_id,
+            "raw_radar": ordered_products[0].raw_radar,
+            "products": product_entries,
+        }
+
+        if include_metadata_flag:
+            sample_key = ordered_products[0].key
+            try:
+                file_bytes = data_source.get_level3_bytes(sample_key)
+                metadata = read_level3_metadata(file_bytes)
+            except Exception:  # pragma: no cover - defensive guard
+                metadata = {}
+            radar_entry.update(metadata)
+
+        radars.append(radar_entry)
+
+    if include_metadata_flag:
+        radars.sort(key=lambda item: (item.get("location") or item["radar_id"]).upper())
+    else:
+        radars.sort(key=lambda item: item["radar_id"].upper())
+
+    if limit > 0:
+        radars = radars[:limit]
+
+    return jsonify(
+        radars=radars,
+        count=len(radars),
+        products=[
+            {"code": code, "tilt_degrees": tilt}
+            for code, tilt in BASE_REFLECTIVITY_TILTS.items()
+        ],
+    )
 
 
 """@app.route('/radar_summary/<path:path>')

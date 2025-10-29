@@ -4,33 +4,82 @@
 <meta charset="utf-8"/>
 <title>Radar Viewer</title>
 <style>
-body{font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;margin:16px}
-#panel{display:flex;gap:16px;align-items:flex-start}
-#list{width:460px;height:70vh;overflow:auto;border:1px solid #ccc;padding:8px}
-#viewer{flex:1}
-#viewer img{max-width:100%;height:auto;border:1px solid #ccc;display:block}
-label{display:block;margin-top:8px}
-#msg{margin-top:8px;color:#b00;white-space:pre-wrap}
-.small{font-size:12px;color:#555}
+*{box-sizing:border-box}
+body{font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;margin:0;background:#f5f6fa;color:#1f2933}
+header{background:#0f4c81;color:#fff;padding:20px 24px}
+h1{margin:0;font-size:28px}
+header p{margin:4px 0 0;font-size:14px;opacity:0.85}
+#controls{background:#fff;padding:16px 24px;display:flex;flex-wrap:wrap;gap:16px;border-bottom:1px solid #d8e2f0}
+#controls label{display:flex;flex-direction:column;font-size:13px;color:#334155;min-width:160px}
+#controls select,#controls input{margin-top:4px;padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px}
+#refreshBtn{align-self:flex-end;padding:8px 16px;background:#0f4c81;color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer;transition:background .2s}
+#refreshBtn:hover{background:#0c3a63}
+#layout{display:grid;grid-template-columns:320px 1fr;gap:0;min-height:calc(100vh - 168px)}
+#radarListContainer{background:#fff;border-right:1px solid #d8e2f0;overflow:auto;padding:16px}
+#radarList{list-style:none;margin:0;padding:0}
+#radarList li{padding:10px 12px;border-radius:8px;cursor:pointer;border:1px solid transparent;display:flex;flex-direction:column;gap:2px;margin-bottom:8px;transition:background .2s,border-color .2s}
+#radarList li:hover{background:#f1f5f9;border-color:#cbd5e1}
+#radarList li.active{background:#0f4c8114;border-color:#0f4c8140}
+#radarList .radar-code{font-weight:600;font-size:15px;color:#0f4c81}
+#radarList .radar-location{font-size:13px;color:#475569}
+#details{padding:24px;overflow:auto}
+#selectedInfo{margin-bottom:24px;display:flex;flex-wrap:wrap;gap:16px;align-items:center}
+#selectedInfo h2{margin:0;font-size:24px;color:#0f4c81}
+#selectedInfo .meta{font-size:14px;color:#475569}
+#images{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:24px}
+.tilt-card{background:#fff;border-radius:12px;box-shadow:0 6px 18px -10px rgba(15,76,129,.6);padding:16px;display:flex;flex-direction:column;gap:12px}
+.tilt-card h3{margin:0;font-size:18px;color:#0f4c81}
+.view-pair{display:flex;gap:12px;flex-wrap:wrap}
+.view{flex:1;min-width:220px}
+.view-title{font-size:13px;color:#64748b;margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em}
+.view img{width:100%;border-radius:8px;border:1px solid #cbd5e1;background:#0f172a}
+#status{padding:12px 24px;font-size:14px;color:#0f4c81;background:#e0f2fe;border-top:1px solid #bae6fd}
+#status.error{background:#fee2e2;color:#991b1b;border-top-color:#fecaca}
+#status.hidden{display:none}
+.chip{display:inline-flex;align-items:center;padding:4px 8px;border-radius:999px;background:#e2e8f0;font-size:12px;color:#475569}
+@media (max-width:960px){#layout{grid-template-columns:1fr}#radarListContainer{border-right:none;border-bottom:1px solid #d8e2f0}}
 </style>
 </head>
 <body>
-<h1>Radar Viewer</h1>
-<div id="panel">
-  <div>
-    <button id="refresh">List files</button>
-    <label>Prefix <input id="prefix" value="KMLB_SDUS52"/></label>
-    <label>DBZ Threshold <input type="number" id="dbz" value="23" min="0" max="80"/></label>
-    <div id="list"></div>
-    <div class="small">Items without an extension are fine - the viewer will try .nc and .mdv.nc automatically.</div>
-    <button id="quick">Quick test</button>
-    <div id="msg"></div>
-  </div>
-  <div id="viewer">
-    <a id="openLink" href="#" target="_blank" style="display:none;margin-bottom:8px">Open image in new tab</a>
-    <img id="radar" alt="radar image"/>
-  </div>
+<header>
+  <h1>Radar Viewer</h1>
+  <p>Latest NEXRAD Level III base reflectivity — four tilts, overview + local zoom</p>
+</header>
+<section id="controls">
+  <label>Data source
+    <select id="sourceSelect">
+      <option value="s3">Amazon S3</option>
+      <option value="thread">NCEI Thread Server</option>
+    </select>
+  </label>
+  <label>Prefix filter
+    <input id="prefixInput" placeholder="Optional prefix"/>
+  </label>
+  <label>Search radar
+    <input id="searchInput" placeholder="City, state or call sign"/>
+  </label>
+  <label>Sort by
+    <select id="sortSelect">
+      <option value="location">Location</option>
+      <option value="radar">Call sign</option>
+    </select>
+  </label>
+  <button id="refreshBtn">Refresh scans</button>
+</section>
+<div id="layout">
+  <aside id="radarListContainer">
+    <ul id="radarList"></ul>
+  </aside>
+  <section id="details">
+    <div id="selectedInfo">
+      <h2 id="selectedTitle">Select a radar</h2>
+      <span class="meta" id="selectedMeta"></span>
+      <span class="chip" id="selectedUpdated" style="display:none"></span>
+    </div>
+    <div id="images"></div>
+  </section>
 </div>
-<script src="/static/radar.js?v=2" defer></script>
+<div id="status" class="hidden"></div>
+<script src="/static/radar.js?v=3" defer></script>
 </body>
 </html>
