@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
+import subprocess
+import sys
 from io import BytesIO
 from mimetypes import add_type
 from pathlib import Path
@@ -12,7 +14,7 @@ from flask import Flask, jsonify, make_response, render_template, request, send_
 from flask_cors import CORS
 
 from run_radar_analysis import Filter
-from services.data_sources import S3DataSource, ThreadDataSource
+from services.data_sources import LocalDataSource, S3DataSource, ThreadDataSource
 from services.data_sources.base import BaseDataSource
 from services import local_cache
 from services.radar_catalog import (
@@ -27,6 +29,8 @@ add_type("application/javascript", ".js")
 
 load_dotenv()
 
+logging.basicConfig(level=logging.INFO)
+
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 
@@ -34,6 +38,7 @@ CORS(app, resources={r"/api/*": {"origins": "*"}})
 _DATA_SOURCE_FACTORIES = {
     "s3": S3DataSource,
     "thread": ThreadDataSource,
+    "local": LocalDataSource,
 }
 
 _data_source_cache: Dict[str, BaseDataSource] = {}
@@ -50,7 +55,7 @@ def get_data_source(name: str) -> BaseDataSource:
 
 @app.route('/')
 def index():
-    return 'App Works!'
+    return app.send_static_file("radar.html")
 
 
 @app.route('/radar_filter/<path:path>/<int:filtered_amount>')
@@ -216,13 +221,32 @@ def api_latest_base_reflectivity():
     limit = request.args.get("limit", default=50, type=int)
     search_limit = request.args.get("search_limit", default=max(limit * 25, 400), type=int)
 
+    requested_source = source
+    active_source = requested_source
     try:
-        data_source = get_data_source(source)
+        data_source = get_data_source(requested_source)
         keys = data_source.list_keys(prefix=prefix, limit=search_limit)
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
     except Exception as exc:  # pragma: no cover - defensive guard
-        return jsonify(error=str(exc)), 502
+        app.logger.exception("%s list_keys failed: %s", requested_source, exc)
+        if requested_source != "local":
+            try:
+                data_source = get_data_source("local")
+                keys = data_source.list_keys(prefix=prefix, limit=search_limit)
+                active_source = "local"
+            except Exception:
+                app.logger.exception("Local fallback also failed")
+                return (
+                    jsonify(
+                        error=(
+                            f"{requested_source.upper()} error and no local fallback: {str(exc)}"
+                        )
+                    ),
+                    502,
+                )
+        else:
+            return jsonify(error=str(exc)), 502
 
     latest = latest_by_radar(keys)
     radars = []
@@ -243,7 +267,10 @@ def api_latest_base_reflectivity():
                 downloaded[parsed.key] = file_bytes
             except Exception as exc:  # pragma: no cover - defensive guard
                 logging.getLogger(__name__).warning(
-                    "Unable to download %s from %s: %s", parsed.key, source, exc
+                    "Unable to download %s from %s: %s",
+                    parsed.key,
+                    active_source,
+                    exc,
                 )
             product_entries.append(
                 {
@@ -291,11 +318,27 @@ def api_latest_base_reflectivity():
     return jsonify(
         radars=radars,
         count=len(radars),
+        source=active_source,
         products=[
             {"code": code, "tilt_degrees": tilt}
             for code, tilt in BASE_REFLECTIVITY_TILTS.items()
         ],
     )
+
+
+@app.post("/api/ingest/last_hour")
+def api_ingest_last_hour():
+    try:
+        proc = subprocess.run(
+            [sys.executable, "scripts/ingest_last_hour.py"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        return jsonify(ok=False, error=exc.stderr or str(exc)), 500
+
+    return jsonify(ok=True, output=proc.stdout)
 
 
 """@app.route('/radar_summary/<path:path>')

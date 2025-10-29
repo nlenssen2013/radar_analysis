@@ -32,7 +32,7 @@ class S3DataSource(BaseDataSource):
         client=None,
     ) -> None:
         if bucket is None:
-            bucket = os.getenv("S3_BUCKET", "noaa-nexrad-level3")
+            bucket = os.getenv("S3_BUCKET", "unidata-nexrad-level3")
         if not bucket:
             raise ValueError("S3 bucket name is required")
 

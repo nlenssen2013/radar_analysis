@@ -82,15 +82,30 @@
     }
   }
 
+  function getLocationText(radar) {
+    const city = (radar.city || '').trim();
+    const stateCode = (radar.state || '').trim();
+    if (city && stateCode) {
+      return `${city}, ${stateCode}`;
+    }
+    if (city) {
+      return city;
+    }
+    if (stateCode) {
+      return stateCode;
+    }
+    return radar.location || 'Unknown location';
+  }
+
   function buildLocationLabel(radar) {
-    const location = radar.location || 'Unknown location';
+    const location = getLocationText(radar);
     return `${location} — ${radar.radar_id}`;
   }
 
   function updateSelectors() {
     const uniqueLocations = new Set();
     state.radars.forEach((radar) => {
-      uniqueLocations.add(radar.location || 'Unknown location');
+      uniqueLocations.add(getLocationText(radar));
     });
 
     const locationOptions = Array.from(uniqueLocations).sort((a, b) =>
@@ -206,7 +221,7 @@
       return;
     }
 
-    const location = radar.location || 'Unknown location';
+    const location = getLocationText(radar);
     dom.title.textContent = `${radar.radar_id}${location ? ' — ' + location : ''}`;
 
     const pieces = [];
@@ -246,7 +261,7 @@
   function filteredRadars() {
     return state.radars.filter((radar) => {
       if (state.prefixLocation) {
-        const location = radar.location || 'Unknown location';
+        const location = getLocationText(radar);
         if (location !== state.prefixLocation) {
           return false;
         }
@@ -281,7 +296,7 @@
 
       const location = document.createElement('span');
       location.className = 'radar-location';
-      location.textContent = radar.location || 'Unknown location';
+      location.textContent = getLocationText(radar);
       li.appendChild(location);
 
       li.addEventListener('click', () => handleSelect(radar.radar_id));
@@ -303,8 +318,8 @@
       if (sortBy === 'radar') {
         return a.radar_id.localeCompare(b.radar_id);
       }
-      const nameA = (a.location || '').toUpperCase();
-      const nameB = (b.location || '').toUpperCase();
+      const nameA = getLocationText(a).toUpperCase();
+      const nameB = getLocationText(b).toUpperCase();
       if (nameA && nameB) {
         return nameA.localeCompare(nameB);
       }
@@ -314,7 +329,11 @@
     });
   }
 
-  async function loadRadars() {
+  async function loadRadars(options = {}) {
+    const { attemptedFallback = false } = options;
+
+    const requestedSource = state.source;
+
     setStatus('Fetching latest radar scans…');
     clearImages();
     dom.title.textContent = 'Select a radar';
@@ -324,23 +343,56 @@
     const params = new URLSearchParams({
       source: state.source,
       include_metadata: 'true',
+      limit: '200',
     });
 
     try {
       const response = await fetch(`/api/base_reflectivity/latest?${params.toString()}`);
       if (!response.ok) {
+        if (response.status >= 500 && state.source !== 'local' && !attemptedFallback) {
+          setStatus('Remote source failed. Switching to local cache…', true);
+          state.source = 'local';
+          dom.source.value = 'local';
+          return loadRadars({ attemptedFallback: true });
+        }
         throw new Error(`Server responded with ${response.status}`);
       }
       const payload = await response.json();
       const radars = Array.isArray(payload.radars) ? payload.radars : [];
       state.radars = radars;
+
+      let fallbackMessage = '';
+      if (payload.source && payload.source !== state.source) {
+        state.source = payload.source;
+        dom.source.value = payload.source;
+        fallbackMessage = ` Remote source ${requestedSource.toUpperCase()} unavailable; showing ${payload.source.toUpperCase()} data.`;
+      }
+
       sortRadars();
       updateSelectors();
       renderList();
-      setStatus(`Loaded ${radars.length} radar site${radars.length === 1 ? '' : 's'}.`);
+      if (radars.length) {
+        setStatus(
+          `Loaded ${radars.length} radar site${radars.length === 1 ? '' : 's'} from ${state.source.toUpperCase()}.${fallbackMessage}`
+        );
+      } else {
+        setStatus(
+          'No radar data available. Try running scripts/ingest_last_hour.py and refresh.',
+          true
+        );
+      }
     } catch (error) {
       console.error(error);
-      setStatus(`Unable to fetch radar list: ${error.message}`, true);
+      if (!attemptedFallback && state.source !== 'local') {
+        state.source = 'local';
+        dom.source.value = 'local';
+        setStatus('Falling back to local cache…', true);
+        return loadRadars({ attemptedFallback: true });
+      }
+      setStatus(
+        `Unable to fetch radar list: ${error.message}. Ensure the ingest script has run or try another source.`,
+        true
+      );
       state.radars = [];
       dom.list.innerHTML = '';
     }
