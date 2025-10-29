@@ -27,6 +27,10 @@ class ThreadDataSource(BaseDataSource):
             raise ValueError("Thread server base URL is required")
 
         self.session = session or requests.Session()
+        self.session.headers.setdefault(
+            "User-Agent",
+            "radar-analysis/1.0 (+https://github.com/radar-analysis)",
+        )
         self.base_url = base_url.rstrip("/")
         self.catalog_url = self._build_catalog_url(self.base_url)
         self.file_base_url = self._build_file_base_url(self.base_url)
@@ -68,16 +72,21 @@ class ThreadDataSource(BaseDataSource):
         return datasets
 
     def get_image_for_key(
-        self, key: str, threshold: Optional[int] = None
+        self, key: str, threshold: Optional[int] = None, view: str = "combined"
     ) -> Tuple[bytes, Dict[str, object]]:
-        download_url = urljoin(f"{self.file_base_url}/", key.lstrip("/"))
-        response = self.session.get(download_url, timeout=30)
-        response.raise_for_status()
-        processed = process_level3_bytes(response.content, threshold)
+        file_bytes = self.get_level3_bytes(key)
+        processed = process_level3_bytes(file_bytes, threshold, view=view)
         metadata: Dict[str, object] = {
             "content_type": processed.content_type,
             "bounds": processed.bounds,
             "key": key,
-            "source_url": download_url,
+            "source_url": urljoin(f"{self.file_base_url}/", key.lstrip("/")),
         }
+        metadata.update(processed.metadata)
         return processed.content, metadata
+
+    def get_level3_bytes(self, key: str) -> bytes:
+        download_url = urljoin(f"{self.file_base_url}/", key.lstrip("/"))
+        response = self.session.get(download_url, timeout=30)
+        response.raise_for_status()
+        return response.content
