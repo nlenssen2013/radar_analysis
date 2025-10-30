@@ -10,6 +10,26 @@ app = Flask(__name__)
 RADAR_DATA_DIR = Path(os.environ.get("RADAR_DATA_DIR", Path(__file__).resolve().parent / "radar_3_data")).resolve()
 
 
+def _normalize_radar_path(path_string: str) -> Path:
+    """Return an absolute path inside ``RADAR_DATA_DIR`` for a requested file.
+
+    The helper accepts both POSIX (``/``) and Windows (``\\``) separators to
+    support clients that may supply paths using their native conventions.
+    """
+
+    sanitized = path_string.replace("\\", "/")
+    parts = [segment for segment in sanitized.split("/") if segment and segment != "."]
+
+    candidate = RADAR_DATA_DIR.joinpath(*parts).resolve()
+
+    try:
+        candidate.relative_to(RADAR_DATA_DIR)
+    except ValueError:
+        abort(404, description="Requested file is outside of the radar data directory")
+
+    return candidate
+
+
 @app.route('/')
 def index():
     return 'App Works!'
@@ -22,7 +42,7 @@ def list_radar_files():
         return jsonify({"files": []})
 
     files = [
-        str(path.relative_to(RADAR_DATA_DIR))
+        path.relative_to(RADAR_DATA_DIR).as_posix()
         for path in sorted(RADAR_DATA_DIR.glob('**/*'))
         if path.is_file()
     ]
@@ -42,12 +62,10 @@ def subset_radar_file(path, filtered_amount):
         }
     """
 
-    resolved_path = (RADAR_DATA_DIR / path).resolve()
+    if not path:
+        abort(404, description="Requested radar file does not exist")
 
-    try:
-        resolved_path.relative_to(RADAR_DATA_DIR)
-    except ValueError:
-        abort(404, description="Requested file is outside of the radar data directory")
+    resolved_path = _normalize_radar_path(path)
 
     if not resolved_path.is_file():
         abort(404, description="Requested radar file does not exist")
@@ -58,7 +76,7 @@ def subset_radar_file(path, filtered_amount):
     image_url = url_for('static', filename=os.path.basename(image_path))
     return jsonify({
         "imageUrl": image_url,
-        "sourceFile": str(resolved_path.relative_to(RADAR_DATA_DIR)),
+        "sourceFile": resolved_path.relative_to(RADAR_DATA_DIR).as_posix(),
         "filteredAmount": filtered_amount,
     })
 
