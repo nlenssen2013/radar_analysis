@@ -19,15 +19,17 @@
 3. Open a browser to [`http://localhost:5000`](http://localhost:5000) and use the dropdown and slider to filter a file.
 4. To view an image directly, request a URL such as:
    ```
-   http://localhost:5000/radar_filter/radar_3_data%2FKMLB_SDUS52_TZ0MCO_202405151912/23
+   http://localhost:5000/radar_filter/KMLB_SDUS52_TZ0MCO_202405151912/23
    ```
+   (The `/radar_filter` endpoint expects paths relative to the radar data directory, so omit the leading
+   `radar_3_data/` segment when crafting a direct link.)
 
 ### RADAR FILTERING SERVICE
 #### This filter will remove all dBZ values in the file below a specific number
 #### Submit a url with the path of the radar file that you would like to filter down along with the dBZ value you would like to filter based off of.
 #### Schema: localhost/radar_filter/path-to-file/dBZ-filter
 #### Test:
-`http://localhost:5000/radar_filter/radar_3_data%2FKMLB_SDUS52_TZ0MCO_202405151912/23`
+`http://localhost:5000/radar_filter/KMLB_SDUS52_TZ0MCO_202405151912/23`
 
 ### Downloading NEXRAD data from AWS
 The repository includes a small helper for grabbing individual Level II and Level III
