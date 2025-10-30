@@ -18,54 +18,6 @@
             margin-bottom: 2rem;
         }
 
-        .download-form {
-            display: grid;
-            gap: 0.75rem;
-            padding: 1rem;
-            border: 1px solid #d0d7de;
-            border-radius: 6px;
-            background-color: #f6f8fa;
-        }
-
-        .download-form h2 {
-            font-size: 1.1rem;
-            font-weight: 600;
-        }
-
-        .download-form label {
-            display: grid;
-            gap: 0.35rem;
-            font-weight: 600;
-        }
-
-        .download-form input {
-            padding: 0.5rem;
-            border: 1px solid #ccd6dd;
-            border-radius: 4px;
-            font-size: 1rem;
-        }
-
-        .download-form small {
-            font-weight: 400;
-            color: #555;
-        }
-
-        .download-form button {
-            justify-self: start;
-            padding: 0.5rem 1rem;
-            font-size: 1rem;
-            border: none;
-            background-color: #1a4fb8;
-            color: white;
-            border-radius: 4px;
-            cursor: pointer;
-        }
-
-        .download-form button:disabled {
-            background-color: #9eb4de;
-            cursor: not-allowed;
-        }
-
         .slider-group {
             display: flex;
             flex-direction: column;
@@ -121,29 +73,6 @@
     <main>
         <h1>Radar Reflectivity Filter</h1>
         <section class="controls" aria-label="Radar filter controls">
-            <form id="download-form" class="download-form" aria-label="Download new radar data">
-                <h2>Fetch new radar file</h2>
-                <p id="download-help">Enter a radar station (e.g. KTLX) and product code (e.g. N0Q or L2). Leave the timestamp empty to fetch the most recent scan.</p>
-                <label for="download-station">
-                    Radar station
-                    <input id="download-station" name="station" type="text" placeholder="e.g. KTLX" autocomplete="off" required />
-                </label>
-                <label for="download-product">
-                    Product code
-                    <input id="download-product" name="product" type="text" placeholder="e.g. N0Q or L2" autocomplete="off" required />
-                </label>
-                <label for="download-timestamp">
-                    Timestamp (UTC)
-                    <input id="download-timestamp" name="timestamp" type="datetime-local" step="60" aria-describedby="download-help" />
-                    <small>Optional. Defaults to the current time if left blank.</small>
-                </label>
-                <label for="download-window">
-                    Search window (minutes)
-                    <input id="download-window" name="window" type="number" min="1" step="1" value="10" />
-                </label>
-                <button id="download-submit" type="submit">Download radar file</button>
-            </form>
-
             <label for="radar-file-select">Radar data file</label>
             <select id="radar-file-select" aria-label="Select radar data file">
                 <option value="">Loading radar files...</option>
@@ -177,13 +106,6 @@
             const applyButton = document.getElementById('apply-filter');
             const radarImage = document.getElementById('radar-image');
             const statusMessage = document.getElementById('status-message');
-            const downloadForm = document.getElementById('download-form');
-            const downloadStation = document.getElementById('download-station');
-            const downloadProduct = document.getElementById('download-product');
-            const downloadTimestamp = document.getElementById('download-timestamp');
-            const downloadWindow = document.getElementById('download-window');
-            const downloadButton = document.getElementById('download-submit');
-            let pendingSelection = null;
 
             const setStatus = (message, type = 'info') => {
                 if (!message) {
@@ -206,17 +128,6 @@
                     applyButton.textContent = 'Processing...';
                 } else {
                     applyButton.textContent = 'Apply Filter';
-                }
-            };
-
-            const setDownloadLoading = (isLoading) => {
-                [downloadStation, downloadProduct, downloadTimestamp, downloadWindow, downloadButton].forEach((element) => {
-                    if (element) {
-                        element.disabled = isLoading;
-                    }
-                });
-                if (downloadButton) {
-                    downloadButton.textContent = isLoading ? 'Downloading…' : 'Download radar file';
                 }
             };
 
@@ -248,10 +159,6 @@
                             const option = new Option(filePath, filePath);
                             fileSelect.appendChild(option);
                         });
-                        if (pendingSelection) {
-                            fileSelect.value = pendingSelection;
-                            pendingSelection = null;
-                        }
                         setStatus('Select a radar file to begin.', 'success');
                     } else {
                         fileSelect.appendChild(new Option('No radar files available', ''));
@@ -293,95 +200,8 @@
                 }
             };
 
-            const normalizeTimestampInput = () => {
-                if (!downloadTimestamp) {
-                    return null;
-                }
-                const rawValue = downloadTimestamp.value.trim();
-                if (!rawValue) {
-                    return null;
-                }
-                if (rawValue.endsWith('Z') || rawValue.endsWith('z')) {
-                    return rawValue;
-                }
-                if (rawValue.length === 16) {
-                    return `${rawValue}:00Z`;
-                }
-                if (rawValue.length === 19) {
-                    return `${rawValue}Z`;
-                }
-                const parsed = new Date(rawValue);
-                if (!Number.isNaN(parsed.getTime())) {
-                    return parsed.toISOString();
-                }
-                return rawValue;
-            };
-
-            const requestDownload = async (event) => {
-                event.preventDefault();
-
-                const stationValue = downloadStation.value.trim();
-                const productValue = downloadProduct.value.trim();
-
-                if (!stationValue || !productValue) {
-                    setStatus('Please provide both station and product codes before downloading.', 'error');
-                    return;
-                }
-
-                const payload = {
-                    station: stationValue,
-                    product: productValue,
-                };
-
-                const timestampPayload = normalizeTimestampInput();
-                if (timestampPayload) {
-                    payload.timestamp = timestampPayload;
-                }
-
-                if (downloadWindow && downloadWindow.value) {
-                    payload.window = downloadWindow.value;
-                }
-
-                setStatus('Downloading radar file…', 'loading');
-                setLoadingState(true);
-                setDownloadLoading(true);
-
-                try {
-                    const response = await fetch('/api/download-radar', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify(payload),
-                    });
-
-                    const body = await response.json().catch(() => ({}));
-                    if (!response.ok) {
-                        const message = body.error || `Request failed with status ${response.status}`;
-                        throw new Error(message);
-                    }
-
-                    pendingSelection = body.filePath || null;
-                    await fetchRadarFiles();
-
-                    if (body.filePath) {
-                        fileSelect.value = body.filePath;
-                    }
-
-                    setStatus(`Radar file ${body.filePath} is ready to filter.`, 'success');
-                } catch (error) {
-                    setStatus(`Download failed: ${error.message}`, 'error');
-                } finally {
-                    setLoadingState(false);
-                    setDownloadLoading(false);
-                }
-            };
-
             slider.addEventListener('input', updateSliderLabel);
             applyButton.addEventListener('click', requestFilteredImage);
-            if (downloadForm) {
-                downloadForm.addEventListener('submit', requestDownload);
-            }
 
             updateSliderLabel();
             fetchRadarFiles();
