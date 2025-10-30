@@ -1,8 +1,211 @@
-<html>
+<!DOCTYPE html>
+<html lang="en">
 <head>
-    <title>Index</title>
+    <meta charset="utf-8" />
+    <title>Radar Reflectivity Filter</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 2rem;
+            line-height: 1.5;
+        }
+
+        .controls {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            max-width: 480px;
+            margin-bottom: 2rem;
+        }
+
+        .slider-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .slider-label {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .actions {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .status {
+            margin-top: 0.5rem;
+            padding: 0.75rem 1rem;
+            border-radius: 4px;
+        }
+
+        .status[hidden] {
+            display: none;
+        }
+
+        .status--loading {
+            background-color: #e8f1ff;
+            color: #1a4fb8;
+        }
+
+        .status--error {
+            background-color: #fdecea;
+            color: #a13d2d;
+        }
+
+        .status--success {
+            background-color: #e6f4ea;
+            color: #1e5d3b;
+        }
+
+        img {
+            max-width: 100%;
+            height: auto;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+    </style>
 </head>
 <body>
-    <img src="{{url_for('static', filename='radar_filter.jpg')}}" />
+    <main>
+        <h1>Radar Reflectivity Filter</h1>
+        <section class="controls" aria-label="Radar filter controls">
+            <label for="radar-file-select">Radar data file</label>
+            <select id="radar-file-select" aria-label="Select radar data file">
+                <option value="">Loading radar files...</option>
+            </select>
+
+            <div class="slider-group">
+                <div class="slider-label">
+                    <label for="dbz-threshold">dBZ Threshold</label>
+                    <span id="dbz-value" aria-live="polite">0 dBZ</span>
+                </div>
+                <input type="range" id="dbz-threshold" min="0" max="80" step="1" value="0" aria-describedby="dbz-value" />
+            </div>
+
+            <div class="actions">
+                <button id="apply-filter" type="button">Apply Filter</button>
+            </div>
+            <div id="status-message" class="status" role="status" aria-live="polite" hidden></div>
+        </section>
+
+        <section>
+            <h2>Filtered Radar Image</h2>
+            <img id="radar-image" src="{{ url_for('static', filename='radar_filter.jpg') }}" alt="Filtered radar output" />
+        </section>
+    </main>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const fileSelect = document.getElementById('radar-file-select');
+            const slider = document.getElementById('dbz-threshold');
+            const sliderValue = document.getElementById('dbz-value');
+            const applyButton = document.getElementById('apply-filter');
+            const radarImage = document.getElementById('radar-image');
+            const statusMessage = document.getElementById('status-message');
+
+            const setStatus = (message, type = 'info') => {
+                if (!message) {
+                    statusMessage.hidden = true;
+                    statusMessage.textContent = '';
+                    statusMessage.className = 'status';
+                    return;
+                }
+
+                statusMessage.hidden = false;
+                statusMessage.textContent = message;
+                statusMessage.className = `status status--${type}`;
+            };
+
+            const setLoadingState = (isLoading) => {
+                applyButton.disabled = isLoading;
+                fileSelect.disabled = isLoading;
+                slider.disabled = isLoading;
+                if (isLoading) {
+                    applyButton.textContent = 'Processing...';
+                } else {
+                    applyButton.textContent = 'Apply Filter';
+                }
+            };
+
+            const updateSliderLabel = () => {
+                sliderValue.textContent = `${slider.value} dBZ`;
+            };
+
+            const encodeRadarPath = (path) => path
+                .split('/')
+                .map(encodeURIComponent)
+                .join('/');
+
+            const fetchRadarFiles = async () => {
+                setStatus('Loading radar files…', 'loading');
+                setLoadingState(true);
+
+                try {
+                    const response = await fetch('/api/radar-files');
+                    if (!response.ok) {
+                        throw new Error(`Request failed with status ${response.status}`);
+                    }
+
+                    const data = await response.json();
+                    fileSelect.innerHTML = '';
+
+                    if (data.files && data.files.length > 0) {
+                        fileSelect.appendChild(new Option('Select a radar file', ''));
+                        data.files.forEach((filePath) => {
+                            const option = new Option(filePath, filePath);
+                            fileSelect.appendChild(option);
+                        });
+                        setStatus('Select a radar file to begin.', 'success');
+                    } else {
+                        fileSelect.appendChild(new Option('No radar files available', ''));
+                        setStatus('No radar files available to filter.', 'error');
+                    }
+                } catch (error) {
+                    fileSelect.innerHTML = '';
+                    fileSelect.appendChild(new Option('Failed to load radar files', ''));
+                    setStatus(`Unable to load radar files: ${error.message}`, 'error');
+                } finally {
+                    setLoadingState(false);
+                }
+            };
+
+            const requestFilteredImage = async () => {
+                const selectedFile = fileSelect.value;
+                if (!selectedFile) {
+                    setStatus('Please choose a radar file before applying the filter.', 'error');
+                    return;
+                }
+
+                setLoadingState(true);
+                setStatus('Generating filtered radar image…', 'loading');
+
+                try {
+                    const endpoint = `/radar_filter/${encodeRadarPath(selectedFile)}/${slider.value}`;
+                    const response = await fetch(endpoint);
+                    if (!response.ok) {
+                        throw new Error(`Request failed with status ${response.status}`);
+                    }
+
+                    const result = await response.json();
+                    radarImage.src = `${result.imageUrl}?t=${Date.now()}`;
+                    setStatus(`Filtered image generated using ${result.sourceFile} at ${result.filteredAmount} dBZ.`, 'success');
+                } catch (error) {
+                    setStatus(`Filtering failed: ${error.message}`, 'error');
+                } finally {
+                    setLoadingState(false);
+                }
+            };
+
+            slider.addEventListener('input', updateSliderLabel);
+            applyButton.addEventListener('click', requestFilteredImage);
+
+            updateSliderLabel();
+            fetchRadarFiles();
+        });
+    </script>
 </body>
 </html>
