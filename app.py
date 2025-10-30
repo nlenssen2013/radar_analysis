@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-from flask import Flask, jsonify, url_for, abort
+from flask import Flask, jsonify, url_for, abort, render_template
 
 from run_radar_analysis import Filter
 
@@ -32,7 +32,7 @@ def _normalize_radar_path(path_string: str) -> Path:
 
 @app.route('/')
 def index():
-    return 'App Works!'
+    return render_template('index.html')
 
 @app.route('/api/radar-files')
 def list_radar_files():
