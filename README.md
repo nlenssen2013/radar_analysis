@@ -11,3 +11,13 @@
 #### Schema: localhost/radar_filter/path-to-file/dBZ-filter
 #### Test:
 `http://localhost:5000/radar_filter/radar_3_data%2FKMLB_SDUS52_TZ0MCO_202405151912/23`
+
+### Downloading NEXRAD data from AWS
+The repository includes a small helper for grabbing individual Level II and Level III
+files.  Use the CLI to fetch the scan closest to a desired timestamp:
+
+```
+python scripts/pull_nexrad.py --station KTLX --timestamp 2024-05-28T18:30 --product L2 --dest ./radar_downloads
+```
+
+Swap ``--product`` with a Level III code (e.g. ``N0Q``) to retrieve that dataset.
