@@ -24,19 +24,13 @@ import re
 import shutil
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Iterable, Optional, Sequence
 
-import xml.etree.ElementTree as ET
-from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlencode
-from urllib.request import urlopen
+import fsspec
 
 
 DEFAULT_L2_BUCKET = "unidata-nexrad-level2"
 DEFAULT_L3_BUCKET = "unidata-nexrad-level3"
-
-_S3_NAMESPACE = "http://s3.amazonaws.com/doc/2006-03-01/"
-_S3_ENDPOINT = "https://{bucket}.s3.amazonaws.com"
 
 
 class RadarFileNotFoundError(FileNotFoundError):
@@ -70,45 +64,17 @@ def _candidate_stations(station: str) -> Sequence[str]:
     return (station,)
 
 
-def _list_s3_keys(bucket: str, prefix: str):
-    """Yield S3 object keys beneath ``prefix`` in ``bucket``."""
-
-    continuation = None
-    params = {"list-type": "2", "prefix": prefix}
-
-    while True:
-        if continuation:
-            params["continuation-token"] = continuation
-        elif "continuation-token" in params:
-            params.pop("continuation-token")
-
-        query = urlencode(params)
-        url = f"{_S3_ENDPOINT.format(bucket=bucket)}?{query}"
-
-        try:
-            with urlopen(url) as response:
-                payload = response.read()
-        except HTTPError as exc:
-            if exc.code == 404:
-                return
-            raise
-        except URLError as exc:  # pragma: no cover - network errors bubble up
-            raise RuntimeError(f"Unable to list S3 objects for prefix {prefix!r}") from exc
-
-        root = ET.fromstring(payload)
-
-        for contents in root.findall(f"{{{_S3_NAMESPACE}}}Contents"):
-            key = contents.findtext(f"{{{_S3_NAMESPACE}}}Key")
-            if key:
-                yield key
-
-        is_truncated = root.findtext(f"{{{_S3_NAMESPACE}}}IsTruncated", default="false")
-        if is_truncated.lower() != "true":
-            break
-
-        continuation = root.findtext(f"{{{_S3_NAMESPACE}}}NextContinuationToken")
-        if not continuation:
-            break
+def _list_keys(fs, base: str) -> Iterable[str]:
+    try:
+        for item in fs.ls(base):
+            if isinstance(item, str):
+                yield item
+            else:  # fsspec may return dicts
+                name = item.get("name")
+                if name:
+                    yield name
+    except FileNotFoundError:
+        return
 
 
 def _parse_l2_time(name: str) -> Optional[datetime]:
@@ -127,22 +93,10 @@ def _parse_l3_time(name: str) -> Optional[datetime]:
     return dt
 
 
-def _download(bucket: str, key: str, dest_path: Path) -> Path:
+def _download(fs, remote_path: str, dest_path: Path) -> Path:
     dest_path.parent.mkdir(parents=True, exist_ok=True)
-    url = f"{_S3_ENDPOINT.format(bucket=bucket)}/{quote(key, safe='/')}"
-
-    try:
-        with urlopen(url) as src, dest_path.open("wb") as dst:
-            shutil.copyfileobj(src, dst)
-    except HTTPError as exc:
-        if exc.code == 404:
-            raise RadarFileNotFoundError(
-                f"Unable to download {key!r} from bucket {bucket!r}"
-            ) from exc
-        raise
-    except URLError as exc:  # pragma: no cover - surface transient issues
-        raise RuntimeError(f"Unable to download S3 object {key!r}") from exc
-
+    with fs.open(remote_path, "rb") as src, dest_path.open("wb") as dst:
+        shutil.copyfileobj(src, dst)
     return dest_path
 
 
@@ -191,17 +145,18 @@ def download_radar_file(
 
     ts = _to_datetime(timestamp)
     dest_dir = Path(dest_dir)
+    fs = fsspec.filesystem("s3", anon=True)
     product_upper = product.upper()
 
     if product_upper in {"L2", "LEVEL2", "LEVEL-2", "LEVELII"}:
         bucket = DEFAULT_L2_BUCKET
         parser = _parse_l2_time
-        prefix_fmt = "{ts:%Y/%m/%d}/{station}/"
+        prefix_fmt = "s3://{bucket}/{ts:%Y/%m/%d}/{station}/"
         stations = _candidate_stations(station)
     else:
         bucket = DEFAULT_L3_BUCKET
         parser = _parse_l3_time
-        prefix_fmt = "{product}/{ts:%Y/%m/%d}/{station}/"
+        prefix_fmt = "s3://{bucket}/{product}/{ts:%Y/%m/%d}/{station}/"
         stations = _candidate_stations(station)
 
     best_rel = None
@@ -209,8 +164,17 @@ def download_radar_file(
     best_remote = None
 
     for cand in stations:
-        prefix = prefix_fmt.format(product=product_upper, ts=ts, station=cand)
-        for rel_path in _list_s3_keys(bucket, prefix):
+        prefix = prefix_fmt.format(bucket=bucket, product=product_upper, ts=ts, station=cand)
+        for key in _list_keys(fs, prefix):
+            if key.startswith("s3://"):
+                trimmed = key[len("s3://") :]
+            else:
+                trimmed = key
+            if trimmed.startswith(bucket + "/"):
+                rel_path = trimmed[len(bucket) + 1 :]
+            else:
+                rel_path = trimmed
+
             name = rel_path.rsplit("/", 1)[-1]
             obs_time = parser(name)
             if obs_time is None:
@@ -219,7 +183,7 @@ def download_radar_file(
             if delta <= search_window and delta < best_delta:
                 best_rel = rel_path
                 best_delta = delta
-                best_remote = rel_path
+                best_remote = f"s3://{bucket}/{rel_path}"
 
     if best_remote is None:
         raise RadarFileNotFoundError(
@@ -230,7 +194,7 @@ def download_radar_file(
     if local_path.exists():
         return local_path
 
-    return _download(bucket, best_remote, local_path)
+    return _download(fs, best_remote, local_path)
 
 
 def _build_parser() -> argparse.ArgumentParser:
