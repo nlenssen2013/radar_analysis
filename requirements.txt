@@ -2,10 +2,12 @@ numpy
 scipy
 matplotlib
 netCDF4
+Pillow
 pooch
 cython
 setuptools
 flask
+boto3
 cartopy
 metpy
 requests

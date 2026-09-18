@@ -1,41 +1,32 @@
-from pathlib import Path
-from flask import Flask, send_file, render_template_string, jsonify
-from run_radar_analysis import RadarProcessor
-import os
+from flask import Flask, send_file, jsonify
+from run_radar_analysis import RadarProcessor, fetch_radar_loop_s3
 
 app = Flask(__name__)
 
-# Basic landing page displaying parameter usage
 @app.route('/')
 def index():
     return jsonify({
-        "status": "active",
-        "service": "Radar Filtering API",
-        "endpoints": {
-            "filter_plot": "/radar_filter/<filtered_amount>"
-        }
+        "status": "online",
+        "example_loop": "http://localhost:5000/radar_loop/KMLB/25"
     })
 
-@app.route('/radar_filter/<string:site_id>/<int:filtered_amount>')
-def subset_radar_file(site_id, filtered_amount):
-    # Hardcoded filename mapping for local testing step
-    # (In Module 2, Boto3 will fetch from S3 using site_id dynamically!)
-    filename = "KMLB_SDUS52_TZ0MCO_202405151912"
-    file_path = Path.cwd() / "radar_3_data" / filename
- 
-    # Debug check: verify file actually exists
-    if not os.path.exists(file_path):
-        return jsonify({
-            "error": "Local radar file missing",
-            "searched_path": file_path
-        }), 404
+@app.route('/radar_loop/<string:site_id>/<int:filtered_amount>')
+def get_radar_gif_loop(site_id, filtered_amount):
+    try:
+        # 1. Fetch latest 5 radar files from S3 into RAM
+        streams = fetch_radar_loop_s3(site_id=site_id, product="N0Q", count=5)
+        
+        # 2. Render plots and stitch into looping GIF
+        gif_buffer = RadarProcessor.generate_animated_gif(streams, filtered_amount)
+        
+        # 3. Serve GIF directly to browser
+        return send_file(gif_buffer, mimetype='image/gif')
 
-    processor = RadarProcessor(file_path)
-    img_buffer = processor.process_and_render(filtered_amount)
-
-    return send_file(img_buffer, mimetype='image/png')
+    except FileNotFoundError as e:
+        return jsonify({"error": str(e)}), 404
+    except Exception as e:
+        return jsonify({"error": "Failed generating radar loop", "details": str(e)}), 500
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=5000, debug=True)
-
 
