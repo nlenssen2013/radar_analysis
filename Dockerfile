@@ -6,6 +6,6 @@ COPY requirements.txt /app
 RUN pip install --upgrade pip
 RUN pip install -r requirements.txt
 COPY . /app
-RUN mkdir /app/static
+RUN mkdir -p /app/static
 EXPOSE 5000
 CMD [ "python", "app.py" ]
