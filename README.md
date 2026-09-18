@@ -30,7 +30,7 @@ Make sure **Docker** and **Docker Desktop** are installed and running on your ma
 Spin up the container environment with a single command:
 ```bash
 docker compose up
-
+```
 
 Once built, the API service will be live at http://localhost:5000.
 
