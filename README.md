@@ -60,10 +60,24 @@ Processes a single radar scan applying a reflectivity threshold and returns a hi
 
 ## 🎓 Student & Portfolio Key Highlights
 
-This application demonstrates several critical data backend concepts:
+Building this application demonstrates proficiency across atmospheric data science, distributed cloud streaming, array-based computing, and production software engineering. 
 
-1. **Zero-Disk Streaming:** Downloads raw binary NEXRAD objects directly into RAM via `io.BytesIO` streams without writing temporary files to local storage.
-2. **Headless Map Rendering:** Utilizes Matplotlib's `Agg` backend inside an isolated Linux container for server-side raster generation.
-3. **Array Manipulation:** Filters multidimensional reflectivity arrays efficiently using vectorized NumPy calculations.
+### 1. Zero-Disk Cloud Streaming Pipeline (I/O Optimization)
+* **In-Memory Buffer Pipeline:** Bypasses local disk storage by streaming raw binary NEXRAD Level 3 radar files directly from NOAA’s AWS S3 buckets into RAM using Python’s `io.BytesIO` and `boto3`.
+* **Stateless Architecture:** Eliminates garbage collection overhead and local disk cleanup routines, allowing the container to process high-throughput data streams cleanly.
+* **Anonymous Cloud Auth:** Implemented `botocore.UNSIGNED` configuration to query public AWS Big Data Program buckets without requiring AWS credentials or API keys.
+
+### 2. High-Performance Array Manipulation (NumPy)
+* **Vectorized Data Thresholding:** Replaced slow nested Python loops with vectorized NumPy operations (`np.where`) to perform real-time reflectivity filtering across multidimensional polar arrays in milliseconds.
+* **Spatial Coordinate Transforms:** Used MetPy and Cartopy mathematical transformations (`azimuth_range_to_lat_lon`) to dynamically map radar gate ranges and azimuth angles to georeferenced Latitude/Longitude grids.
+
+### 3. Server-Side Image Synthesis & Animation
+* **Headless Map Rendering:** Configured Matplotlib to run on the non-interactive `Agg` backend, preventing GUI thread locks when generating Cartopy spatial plots inside a headless Linux container.
+* **Dynamic GIF Encoding:** Rendered consecutive radar frame plots directly into `Pillow` (PIL) image objects, stitching them in memory into a zero-latency, infinitely looping animated GIF stream (`mimetype='image/gif'`).
+
+### 4. Containerized Microservice Delivery (DevOps)
+* **Dockerized Runtime:** Isolated system-level C dependencies required by geospatial libraries (`GEOS`, `PROJ`, `GDAL`) inside a reproducible Docker environment.
+* **RESTful Parameterization:** Designed dynamic HTTP URL routes (`/radar_loop/<site_id>/<dbz_threshold>`) to allow clients to control data filtering and spatial queries purely through standard REST endpoints.
+
 
 
